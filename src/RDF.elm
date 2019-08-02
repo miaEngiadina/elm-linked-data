@@ -1,14 +1,12 @@
-module Rdf exposing
+module RDF exposing
     ( BlankNode
     , Graph
-    , IRI
     , Literal
     , Object
     , Predicate
     , Subject
     , Triple
     , blankNode
-    , iri
     , objectBlankNode
     , objectIRI
     , objectLiteral
@@ -21,20 +19,9 @@ module Rdf exposing
 {-| Resource Description Framework (RDF). See <https://www.w3.org/TR/rdf11-concepts/>
 -}
 
+import RDF.IRI exposing (IRI)
+
 -- RDF Terms
-
-
-{-| An Internationalized Resource Identifier. See <https://www.ietf.org/rfc/rfc3987.txt>.
--}
-type alias IRI =
-    String
-
-
-{-| Construct an IRI
--}
-iri : String -> IRI
-iri =
-    identity
 
 
 {-| A blank node

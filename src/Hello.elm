@@ -3,10 +3,14 @@ module Hello exposing (Model, Msg(..), init, main, subscriptions, update, view)
 --
 
 import Browser as B
-import Html as H
-import Return exposing (Return)
 import Debug
-import Rdf
+import Html as H
+import Http
+import Json.Decode
+import Json.Value
+import RDF
+import Return exposing (Return)
+import Json.LD.Context as Context
 
 
 main : Program {} Model Msg
@@ -19,21 +23,31 @@ main =
         }
 
 
+getExampleContext : Cmd Msg
+getExampleContext =
+    { url = "https://w3c.github.io/json-ld-api/tests/context.jsonld"
+    , expect = Http.expectString ReceiveContext
+    }
+        |> Http.get
+
+
 
 -- MODEL
 
 
 type alias Model =
-    Rdf.Triple
+    String
 
 
 init : {} -> Return Msg Model
 init flags =
-    Rdf.triple
-        (Rdf.subjectIRI "http://example.com/test")
-        (Rdf.predicateIRI "http://example.com/color")
-        (Rdf.objectIRI "http://example.com/red")
+    RDF.triple
+        (RDF.subjectIRI "http://example.com/test")
+        (RDF.predicateIRI "http://example.com/color")
+        (RDF.objectIRI "http://example.com/red")
+        |> Debug.toString
         |> Return.singleton
+        |> Return.command getExampleContext
 
 
 
@@ -41,13 +55,22 @@ init flags =
 
 
 type Msg
-    = NoOp
+    = ReceiveContext (Result Http.Error String)
 
 
 update : Msg -> Model -> Return Msg Model
 update msg model =
-    model
-        |> Return.singleton
+    case msg of
+        ReceiveContext (Ok context) ->
+            context
+                |> Json.Decode.decodeString Context.decoder
+                |> Debug.toString
+                |> Return.singleton
+
+        ReceiveContext (Err e) ->
+            e
+                |> Debug.toString
+                |> Return.singleton
 
 
 
@@ -66,5 +89,5 @@ subscriptions model =
 view : Model -> B.Document Msg
 view model =
     { title = "Hello World"
-    , body = [ model |> Debug.toString |> H.text ]
+    , body = [ model |> H.text ]
     }
