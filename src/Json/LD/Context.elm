@@ -11,7 +11,7 @@ import Dict exposing (Dict)
 import Json.Decode as JD exposing (Decoder)
 import Json.Value exposing (JsonValue(..))
 import List.Extra
-import RDF.IRI exposing (IRI)
+import RDF.IRI as IRI exposing (IRI)
 
 
 
@@ -145,6 +145,7 @@ update remote local active =
                 |> Result.andThen (updateVocabMapping contextValues)
                 |> Result.andThen (updateDefaultLanguage contextValues)
 
+        -- TODO: invoke term definition algorithm
         _ ->
             -- 3.3) If context is not a JSON object, an invalid local context error has been detected and processing is aborted.
             Err InvalidLocalContext
@@ -165,9 +166,22 @@ updateBaseIRI remoteContexts contextValues result =
                     Ok { result | baseIRI = Nothing }
 
                 Just (StringValue value) ->
-                    -- 3.4.3) Otherwise, if value is an absolute IRI, the base IRI of result is set to value.
-                    -- 3.4.4) Otherwise, if value is a relative IRI and the base IRI of result is not null, set the base IRI of result to the result of resolving value against the current base IRI of result.
-                    Debug.todo "decide if absolute or relative IRI"
+                    let
+                        iri =
+                            IRI.fromString value
+                    in
+                    if IRI.isAbsolute iri then
+                        -- 3.4.3) Otherwise, if value is an absolute IRI, the base IRI of result is set to value.
+                        Ok { result | baseIRI = Just iri }
+
+                    else if IRI.isRelative iri then
+                        -- 3.4.4) Otherwise, if value is a relative IRI and the base IRI of result is not null, set the base IRI of result to the result of resolving value against the current base IRI of result.
+                        -- TODO: "resolve against the current base IRI"
+                        Ok { result | baseIRI = Just iri }
+
+                    else
+                        -- 3.4.5) Otherwise, an invalid base IRI error has been detected and processing is aborted.
+                        Err InvalidBaseIRI
 
                 Just _ ->
                     -- 3.4.5) Otherwise, an invalid base IRI error has been detected and processing is aborted.
@@ -190,7 +204,14 @@ updateVocabMapping contextValues result =
 
         Just (StringValue value) ->
             -- 3.5.3) Otherwise, if value is an absolute IRI or blank node identifier, the vocabulary mapping of result is set to value. If it is not an absolute IRI or blank node identifier, an invalid vocab mapping error has been detected and processing is aborted.
-            Debug.todo "handle IRI"
+            if IRI.fromString value |> IRI.isAbsolute then
+                Ok { result | vocabularyMapping = Just value }
+
+            else if isBlankNodeIdentifier value then
+                Ok { result | vocabularyMapping = Just value }
+
+            else
+                Err InvalidVocabMapping
 
         Just _ ->
             Err InvalidVocabMapping
@@ -217,6 +238,17 @@ updateDefaultLanguage contextValues result =
 
         Nothing ->
             Ok result
+
+
+
+-- more helpers
+
+
+{-| Detect if string is a blank node identifier (<https://www.w3.org/TR/json-ld-api/#dfn-blank-node>)
+-}
+isBlankNodeIdentifier : String -> Bool
+isBlankNodeIdentifier =
+    String.startsWith "_"
 
 
 
