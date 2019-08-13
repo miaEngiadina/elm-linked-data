@@ -1,4 +1,10 @@
-module RDF.IRI exposing (IRI, fromString, isAbsolute, isRelative)
+module RDF.IRI exposing
+    ( IRI
+    , fromString
+    , isAbsolute
+    , isRelative
+    , split
+    )
 
 {-| Internationalized Resource Identifiers (IRIs)
 
@@ -27,8 +33,7 @@ So then what is this module?
 -}
 
 
-
-{-| TODO: The typed nicer way to do this would be something like: https://github.com/nikita-volkov/iri/blob/master/library/Iri/Data/Types.hs#L85
+{-| TODO: The typed nicer way to do this would be something like: <https://github.com/nikita-volkov/iri/blob/master/library/Iri/Data/Types.hs#L85>
 -}
 type alias IRI =
     String
@@ -46,7 +51,21 @@ isRelative iri =
     False
 
 
-{-| TODO -}
+{-| TODO
+-}
 isAbsolute : IRI -> Bool
 isAbsolute iri =
     True
+
+
+split : IRI -> Maybe ( String, String )
+split iri =
+    case String.split ":" iri of
+        [] ->
+            Nothing
+
+        nocolon :: [] ->
+            Nothing
+
+        prefix :: suffixList ->
+            Just ( prefix, String.concat suffixList )

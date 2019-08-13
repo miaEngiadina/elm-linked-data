@@ -5,6 +5,7 @@ module Spaghetti exposing
     , continue
     , done
     , fail
+    , ifAndThen
     , join
     , map
     , map2
@@ -78,12 +79,28 @@ join mma =
         |> andThen identity
 
 
-{-| -}
+{-| Sequence a computation if given function evaluates to Just.
+-}
 maybeAndThen : (a -> Maybe b) -> (b -> a -> State error a result) -> State error a result -> State error a result
 maybeAndThen get f state =
     map (get >> Maybe.map f >> Maybe.withDefault pure) state
         |> andMap state
         |> join
+
+
+{-| Conditionally sequence a computation
+-}
+ifAndThen : (a -> Bool) -> (a -> State error a result) -> State error a result -> State error a result
+ifAndThen cond f state =
+    andThen
+        (\a ->
+            if cond a then
+                f a
+
+            else
+                pure a
+        )
+        state
 
 
 

@@ -115,6 +115,7 @@ type Error
     | InvalidIRIMapping
     | InvalidContainerMapping
     | InvalidLanguageMapping
+    | InvalidKeywordAlias
 
 
 {-| Json.Decode requires errors to be printable as string
@@ -157,6 +158,9 @@ errorToString error =
 
         InvalidLanguageMapping ->
             "An @language member in a term definition was encountered whose value was neither a string nor null and thus invalid."
+
+        InvalidKeywordAlias ->
+            "An invalid keyword alias definition has been encountered."
 
 
 {-| Helper to convert Result to Json.Decode.Decoder
@@ -375,15 +379,28 @@ createTermDefinition local term ( active, defined ) =
             )
         -- 10) If value contains the key @type:
         |> S.maybeAndThen (getFromValue "@type")
-            (\typeValue state ->
+            (\typeValue state_ ->
                 case typeValue of
-                    StringValue type_ ->
+                    StringValue type__ ->
                         -- 10.1) Initialize type to the value associated with the @type key, which must be a string.
-                        -- TODO 10.2) Set type to the result of using the IRI Expansion algorithm, passing active context, type for value, true for vocab, false for document relative, local context, and defined. If the expanded type is neither @id, nor @vocab, nor an absolute IRI, an invalid type mapping error has been detected and processing is aborted.
-                        -- 10.3) Set the type mapping for definition to type.
-                        state
-                            |> mapDefinition (\definition -> { definition | typeMapping = Just type_ })
+                        ( type__, state_ )
                             |> S.continue
+                            -- 10.2) Set type to the result of using the IRI Expansion algorithm, passing active context, type for value, true for vocab, false for document relative, local context, and defined. If the expanded type is neither @id, nor @vocab, nor an absolute IRI, an invalid type mapping error has been detected and processing is aborted.
+                            |> S.andThen
+                                (\( type_, state ) ->
+                                    case expandIRI state.active False True (Just local) (Just state.defined) type_ of
+                                        Ok expandedTypeIRI ->
+                                            ( expandedTypeIRI, state ) |> S.continue
+
+                                        Err e ->
+                                            e |> S.fail
+                                )
+                            -- 10.3) Set the type mapping for definition to type.
+                            |> S.map
+                                (\( type_, state ) ->
+                                    state
+                                        |> mapDefinition (\definition -> { definition | typeMapping = Just type_ })
+                                )
 
                     _ ->
                         -- Otherwise, an invalid type mapping error has been detected and processing is aborted.
@@ -392,41 +409,58 @@ createTermDefinition local term ( active, defined ) =
             )
         -- 11) If value contains the key @reverse:
         |> S.maybeAndThen (getFromValue "@reverse")
-            (\reverseValue state ->
-                state
+            (\reverseValue state_ ->
+                state_
                     |> S.continue
                     -- 11.1) If value contains an @id, member, an invalid reverse property error has been detected and processing is aborted.
                     |> S.maybeAndThen (getFromValue "@id") (\_ _ -> InvalidReverseProperty |> S.fail)
                     -- 11.2) If the value associated with the @reverse key is not a string, an invalid IRI mapping error has been detected and processing is aborted.
                     |> S.andThen
-                        (\state_ ->
+                        (\state ->
                             case reverseValue of
-                                StringValue mapping ->
-                                    -- 11.3) Otherwise, set the IRI mapping of definition to the result of using the IRI Expansion algorithm, passing active context, the value associated with the @reverse key for value, true for vocab, false for document relative, local context, and defined. If the result is neither an absolute IRI nor a blank node identifier, i.e., it contains no colon (:), an invalid IRI mapping error has been detected and processing is aborted.
-                                    -- TODO: IRI expansion
-                                    state_
-                                        |> mapDefinition (\definition -> { definition | mapping = mapping })
-                                        |> S.continue
+                                StringValue _ ->
+                                    state |> S.continue
+
+                                _ ->
+                                    InvalidIRIMapping |> S.fail
+                        )
+                    -- 11.3) Otherwise, set the IRI mapping of definition to the result of using the IRI Expansion algorithm, passing active context, the value associated with the @reverse key for value, true for vocab, false for document relative, local context, and defined. If the result is neither an absolute IRI nor a blank node identifier, i.e., it contains no colon (:), an invalid IRI mapping error has been detected and processing is aborted.
+                    |> S.andThen
+                        (\state ->
+                            case reverseValue of
+                                StringValue reverse ->
+                                    case expandIRI state.active False True (Just local) (Just state.defined) reverse of
+                                        Ok expandedReverseMapping ->
+                                            if not (String.contains ":" expandedReverseMapping) then
+                                                InvalidIRIMapping |> S.fail
+
+                                            else
+                                                state
+                                                    |> mapDefinition (\definition -> { definition | mapping = expandedReverseMapping })
+                                                    |> S.continue
+
+                                        Err e ->
+                                            e |> S.fail
 
                                 _ ->
                                     InvalidIRIMapping |> S.fail
                         )
                     -- 11.4) If value contains an @container member, set the container mapping of definition to its value; if its value is neither @set, nor @index, nor null, an invalid reverse property error has been detected (reverse properties only support set- and index-containers) and processing is aborted.
                     |> S.maybeAndThen (getFromValue "@container")
-                        (\containerValue state_ ->
+                        (\containerValue state ->
                             case containerValue of
                                 StringValue "@set" ->
-                                    state_
+                                    state
                                         |> mapDefinition (\definition -> { definition | containerMapping = Just "@set" })
                                         |> S.continue
 
                                 StringValue "@index" ->
-                                    state_
+                                    state
                                         |> mapDefinition (\definition -> { definition | containerMapping = Just "@index" })
                                         |> S.continue
 
                                 NullValue ->
-                                    state_
+                                    state
                                         |> mapDefinition (\definition -> { definition | containerMapping = Nothing })
                                         |> S.continue
 
@@ -455,19 +489,30 @@ createTermDefinition local term ( active, defined ) =
                             Just idValue
                     )
             )
-            (\idValue state ->
-                case idValue of
-                    StringValue mapping ->
+            (\idValue_ state ->
+                case idValue_ of
+                    StringValue idValue ->
                         -- 13.2) Otherwise, set the IRI mapping of definition to the result of using the IRI Expansion algorithm, passing active context, the value associated with the @id key for value, true for vocab, false for document relative, local context, and defined. If the resulting IRI mapping is neither a keyword, nor an absolute IRI, nor a blank node identifier, an invalid IRI mapping error has been detected and processing is aborted; if it equals @context, an invalid keyword alias error has been detected and processing is aborted.
-                        -- TODO: IRI Expansion
-                        state
-                            |> mapDefinition (\definition -> { definition | mapping = mapping })
-                            |> S.continue
+                        case expandIRI state.active False True (Just local) (Just state.defined) idValue of
+                            Ok expandedIdValue ->
+                                if not (String.contains ":" expandedIdValue || List.member expandedIdValue keywords) then
+                                    InvalidIRIMapping |> S.fail
+
+                                else if expandedIdValue == "@context" then
+                                    InvalidKeywordAlias |> S.fail
+
+                                else
+                                    state
+                                        |> mapDefinition (\definition -> { definition | mapping = expandedIdValue })
+                                        |> S.continue
+
+                            Err e ->
+                                e |> S.fail
 
                     _ ->
+                        -- 13.1) If the value associated with the @id key is not a string, an invalid IRI mapping error has been detected and processing is aborted.
                         InvalidIRIMapping
                             |> S.fail
-             -- 13.1) If the value associated with the @id key is not a string, an invalid IRI mapping error has been detected and processing is aborted.
             )
         -- 14)  Otherwise if the term contains a colon (:):
         |> S.maybeAndThen
@@ -552,6 +597,131 @@ createTermDefinition local term ( active, defined ) =
         |> S.andThen return
         -- Return as Result
         |> S.toResult (\a -> Err InvalidLocalContext)
+
+
+expandIRI : Context -> Bool -> Bool -> Maybe (AssocList JsonValue) -> Maybe (Dict String Bool) -> String -> Result Error String
+expandIRI active documentRelative vocab maybeLocal maybeDefined value =
+    { value = value
+    , active = active
+    , documentRelative = documentRelative
+    , vocab = vocab
+    , local = maybeLocal
+    , defined = maybeDefined |> Maybe.withDefault Dict.empty
+    }
+        |> S.continue
+        -- 1) If value is a keyword or null, return value as is.
+        |> S.andThen
+            (\state ->
+                if List.member value keywords then
+                    value |> S.done
+
+                else
+                    state |> S.continue
+            )
+        -- 2) If local context is not null, it contains a key that equals value, and the value associated with the key that equals value in defined is not true, invoke the Create Term Definition algorithm, passing active context, local context, value as term, and defined. This will ensure that a term definition is created for value in active context during Context Processing.
+        |> S.ifAndThen
+            (\state -> (Maybe.map (get value) state.local |> isJust) && not (Dict.get value state.defined |> Maybe.withDefault False))
+            (\state ->
+                case createTermDefinition (state.local |> Maybe.withDefault []) value ( state.active, state.defined ) of
+                    Ok ( active_, defined_ ) ->
+                        { state
+                            | active = active
+                            , defined = defined_
+                        }
+                            |> S.continue
+
+                    Err e ->
+                        e |> S.fail
+            )
+        -- 3) If vocab is true and the active context has a term definition for value, return the associated IRI mapping.
+        |> S.maybeAndThen
+            (\state ->
+                if vocab then
+                    Dict.get value state.active.termDefinitions
+
+                else
+                    Nothing
+            )
+            (\definition _ -> definition.mapping |> S.done)
+        -- 4) If value contains a colon (:), it is either an absolute IRI, a compact IRI, or a blank node identifier:
+        |> S.maybeAndThen
+            (\state ->
+                -- 4.1) Split value into a prefix and suffix at the first occurrence of a colon (:).
+                IRI.split value
+            )
+            (\( prefix, suffix ) state_ ->
+                state_
+                    |> S.continue
+                    -- 4.2) If prefix is underscore (_) or suffix begins with double-forward-slash (//), return value as it is already an absolute IRI or a blank node identifier.
+                    |> S.andThen
+                        (\state ->
+                            if prefix == "_" || String.startsWith "//" suffix then
+                                state.value |> S.done
+
+                            else
+                                state |> S.continue
+                        )
+                    -- 4.3) If local context is not null, it contains a key that equals prefix, and the value associated with the key that equals prefix in defined is not true, invoke the Create Term Definition algorithm, passing active context, local context, prefix as term, and defined. This will ensure that a term definition is created for prefix in active context during Context Processing.
+                    |> S.ifAndThen
+                        (\state -> (Maybe.map (get prefix) state.local |> isJust) && not (Dict.get prefix state.defined |> Maybe.withDefault False))
+                        (\state ->
+                            case createTermDefinition (state.local |> Maybe.withDefault []) prefix ( state.active, state.defined ) of
+                                Ok ( active_, defined_ ) ->
+                                    { state
+                                        | active = active
+                                        , defined = defined_
+                                    }
+                                        |> S.continue
+
+                                Err e ->
+                                    e |> S.fail
+                        )
+                    -- 4.4) If active context contains a term definition for prefix, return the result of concatenating the IRI mapping associated with prefix and suffix.
+                    |> S.maybeAndThen (\state -> Dict.get prefix state.active.termDefinitions)
+                        (\definition _ ->
+                            String.concat [ definition.mapping, suffix ] |> S.done
+                        )
+                    -- 4.5) Return value as it is already an absolute IRI.
+                    |> S.andThen
+                        (\state ->
+                            state.value |> S.done
+                        )
+            )
+        -- 5) If vocab is true, and active context has a vocabulary mapping, return the result of concatenating the vocabulary mapping with value.
+        |> S.maybeAndThen
+            (\state ->
+                if state.vocab then
+                    state.active.vocabularyMapping
+
+                else
+                    Nothing
+            )
+            (\vocabularyMapping state ->
+                String.concat [ vocabularyMapping, state.value ]
+                    |> S.done
+            )
+        -- 6) Otherwise, if document relative is true, set value to the result of resolving value against the base IRI. Only the basic algorithm in section 5.2 of [RFC3986] is used; neither Syntax-Based Normalization nor Scheme-Based Normalization are performed. Characters additionally allowed in IRI references are treated in the same way that unreserved characters are treated in URI references, per section 6.5 of [RFC3987].
+        |> S.maybeAndThen
+            (\state ->
+                if state.documentRelative then
+                    state.active.baseIRI
+
+                else
+                    Nothing
+            )
+            (\baseIRI state ->
+                -- TODO: resolve against base IRI
+                state |> S.continue
+            )
+        -- 7) Return value as is.
+        |> S.andThen (\state -> state.value |> S.done)
+        |> Debug.log "expandIRI"
+        |> S.toResult (\a -> Err InvalidLocalContext)
+
+
+isJust : Maybe a -> Bool
+isJust maybe =
+    maybe |> Maybe.map (\_ -> True) |> Maybe.withDefault False
 
 
 
