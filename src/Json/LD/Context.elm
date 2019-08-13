@@ -77,8 +77,6 @@ empty =
     }
 
 
-{-| TODO
--}
 type alias TermDefinition =
     -- Each term definition consists of
     { -- an IRI mapping,
@@ -515,22 +513,16 @@ createTermDefinition local term ( active, defined ) =
                             |> S.fail
             )
         -- 14)  Otherwise if the term contains a colon (:):
-        |> S.maybeAndThen
-            (\_ ->
-                if String.contains ":" term then
-                    Just ()
-
-                else
-                    Nothing
-            )
-            (\_ state ->
-                -- 14.1) If term is a compact IRI with a prefix that is a key in local context a dependency has been found. Use this algorithm recursively passing active context, local context, the prefix as term, and defined.
-                -- TODO
-                -- 14.2) If term's prefix has a term definition in active context, set the IRI mapping of definition to the result of concatenating the value associated with the prefix's IRI mapping and the term's suffix.
-                -- TODO
-                -- 14.3) Otherwise, term is an absolute IRI or blank node identifier. Set the IRI mapping of definition to term.
-                -- TODO
-                state |> S.continue
+        |> S.ifAndThen
+            (\_ -> String.contains ":" term)
+            (\state_ ->
+                state_ |> S.continue
+             -- 14.1) If term is a compact IRI with a prefix that is a key in local context a dependency has been found. Use this algorithm recursively passing active context, local context, the prefix as term, and defined.
+             -- TODO
+             -- 14.2) If term's prefix has a term definition in active context, set the IRI mapping of definition to the result of concatenating the value associated with the prefix's IRI mapping and the term's suffix.
+             -- TODO
+             -- 14.3) Otherwise, term is an absolute IRI or blank node identifier. Set the IRI mapping of definition to term.
+             -- TODO
             )
         -- 15) Otherwise, if active context has a vocabulary mapping, the IRI mapping of definition is set to the result of concatenating the value associated with the vocabulary mapping and term. If it does not have a vocabulary mapping, an invalid IRI mapping error been detected and processing is aborted.
         |> S.andThen
@@ -565,8 +557,15 @@ createTermDefinition local term ( active, defined ) =
                             |> S.fail
             )
         -- 17) If value contains the key @language and does not contain the key @type:
-        |> S.maybeAndThen (getFromValue "@language")
-            -- TODO: does not contain the key @type
+        |> S.maybeAndThen
+            (\state ->
+                case getFromValue "@type" state of
+                    Nothing ->
+                        getFromValue "@language" state
+
+                    Just _ ->
+                        Nothing
+            )
             (\languageValue state ->
                 case languageValue of
                     -- 17.1) Initialize language to the value associated with the @language key, which must be either null or a string. Otherwise, an invalid language mapping error has been detected and processing is aborted.
