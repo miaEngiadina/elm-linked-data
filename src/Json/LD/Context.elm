@@ -10,6 +10,7 @@ This module contains the context related algorithms described in "JSON-LD
 import Dict exposing (Dict)
 import Json.Decode as JD exposing (Decoder)
 import Json.Value exposing (JsonValue(..))
+import Json.LD.Error as Error exposing (Error(..))
 import List.Extra
 import RDF.IRI as IRI exposing (IRI)
 import Spaghetti as S exposing (State)
@@ -100,67 +101,6 @@ type alias TermDefinition =
 -- Error handling
 
 
-type Error
-    = InvalidLocalContext
-    | InvalidBaseIRI
-    | InvalidVocabMapping
-    | InvalidDefaultLanguage
-    | CyclicIRIMapping
-    | KeywordRedefinition
-    | InvalidTermDefinition
-    | InvalidTypeMapping
-    | InvalidReverseProperty
-    | InvalidIRIMapping
-    | InvalidContainerMapping
-    | InvalidLanguageMapping
-    | InvalidKeywordAlias
-
-
-{-| Json.Decode requires errors to be printable as string
--}
-errorToString : Error -> String
-errorToString error =
-    case error of
-        InvalidLocalContext ->
-            "An invalid local context was detected."
-
-        InvalidBaseIRI ->
-            "An invalid base IRI has been detected, i.e., it is neither an absolute IRI nor null."
-
-        InvalidVocabMapping ->
-            "An invalid vocabulary mapping has been detected, i.e., it is neither an absolute IRI nor null."
-
-        InvalidDefaultLanguage ->
-            "The value of the default language is not a string or null and thus invalid."
-
-        CyclicIRIMapping ->
-            "A cycle in IRI mapping has been detected."
-
-        KeywordRedefinition ->
-            "A keyword redefinition has been detected."
-
-        InvalidTermDefinition ->
-            "An invalid term definition has been detected."
-
-        InvalidTypeMapping ->
-            "An @type member in a term definition was encountered whose value could not be expanded to an absolute IRI."
-
-        InvalidReverseProperty ->
-            "An invalid reverse property definition has been detected."
-
-        InvalidIRIMapping ->
-            "A local context contains a term that has an invalid or missing IRI mapping."
-
-        InvalidContainerMapping ->
-            "An @container member was encountered whose value was not one of the following strings: @list, @set, or @index."
-
-        InvalidLanguageMapping ->
-            "An @language member in a term definition was encountered whose value was neither a string nor null and thus invalid."
-
-        InvalidKeywordAlias ->
-            "An invalid keyword alias definition has been encountered."
-
-
 {-| Helper to convert Result to Json.Decode.Decoder
 -}
 resultToDecoder : Result Error Context -> Decoder Context
@@ -172,7 +112,7 @@ resultToDecoder result =
         Err e ->
             String.concat
                 [ "Processing JSON-LD context failed: "
-                , e |> errorToString
+                , e |> Error.toString
                 ]
                 |> JD.fail
 
