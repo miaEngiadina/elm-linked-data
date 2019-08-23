@@ -1,4 +1,4 @@
-module Json.LD exposing (decoder)
+module Json.LD exposing (decoder, expand)
 
 import Dict exposing (Dict)
 import Json.Decode exposing (Decoder)
@@ -18,3 +18,13 @@ You may specify a context that will be used.
 decoder : Context -> Decoder RDF.Graph
 decoder context =
     Debug.todo "yup, still a long way"
+
+
+expand : Context -> JsonValue -> JsonValue
+expand context input =
+    expansionAlgorithm context Nothing input
+
+
+expansionAlgorithm : Context -> Maybe String -> JsonValue -> JsonValue
+expansionAlgorithm context activeProperty element =
+    element

@@ -1,4 +1,4 @@
-module Json.LD.Context exposing (Context, decoder, update)
+module Json.LD.Context exposing (Context, empty, decoder, update)
 
 {-| JSON-LD Context
 

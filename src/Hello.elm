@@ -5,12 +5,16 @@ module Hello exposing (Model, Msg(..), init, main, subscriptions, update, view)
 import Browser as B
 import Debug
 import Html as H
+import Html.Attributes as HA
+import Html.Events as HE
 import Http
 import Json.Decode
+import Json.Encode
+import Json.LD
+import Json.LD.Context as Context
 import Json.Value
 import RDF
 import Return exposing (Return)
-import Json.LD.Context as Context
 
 
 main : Program {} Model Msg
@@ -23,31 +27,41 @@ main =
         }
 
 
-getExampleContext : Cmd Msg
-getExampleContext =
-    { url = "https://w3c.github.io/json-ld-api/tests/context.jsonld"
-    , expect = Http.expectString ReceiveContext
-    }
-        |> Http.get
-
-
 
 -- MODEL
 
 
 type alias Model =
-    String
+    { input : String
+    , context : String
+    , expanded : String
+    }
+
+
+testInput =
+    """
+{
+ "@context":
+ {
+    "name": "http://xmlns.com/foaf/0.1/name",
+    "homepage": {
+      "@id": "http://xmlns.com/foaf/0.1/homepage",
+      "@type": "@id"
+    }
+ },
+ "name": "Manu Sporny",
+ "homepage": "http://manu.sporny.org/"
+}
+    """
 
 
 init : {} -> Return Msg Model
 init flags =
-    RDF.triple
-        (RDF.subjectIRI "http://example.com/test")
-        (RDF.predicateIRI "http://example.com/color")
-        (RDF.objectIRI "http://example.com/red")
-        |> Debug.toString
-        |> Return.singleton
-        |> Return.command getExampleContext
+    { input = testInput
+    , context = ""
+    , expanded = ""
+    }
+        |> update Decode
 
 
 
@@ -55,21 +69,33 @@ init flags =
 
 
 type Msg
-    = ReceiveContext (Result Http.Error String)
+    = Decode
+    | UpdateInput String
 
 
 update : Msg -> Model -> Return Msg Model
 update msg model =
     case msg of
-        ReceiveContext (Ok context) ->
-            context
-                |> Json.Decode.decodeString Context.decoder
-                |> Debug.toString
+        Decode ->
+            { model
+                | context =
+                    model.input
+                        |> Json.Decode.decodeString Context.decoder
+                        |> Debug.toString
+                , expanded =
+                    case model.input |> Json.Decode.decodeString Json.Value.decoder |> Result.map (Json.LD.expand Context.empty) of
+                        Ok expanded ->
+                            expanded
+                                  |> Json.Value.encode
+                                  |> Json.Encode.encode 4
+
+                        Err e ->
+                            e |> Json.Decode.errorToString
+            }
                 |> Return.singleton
 
-        ReceiveContext (Err e) ->
-            e
-                |> Debug.toString
+        UpdateInput input ->
+            { model | input = input }
                 |> Return.singleton
 
 
@@ -89,5 +115,27 @@ subscriptions model =
 view : Model -> B.Document Msg
 view model =
     { title = "Hello World"
-    , body = [ model |> H.text ]
+    , body =
+        [ H.div []
+            [ H.textarea
+                [ HA.style "height" "500px"
+                , HA.style "width" "25vw"
+                , HE.onInput UpdateInput
+                ]
+                [ model.input |> H.text ]
+            , H.textarea
+                [ HA.style "height" "500px"
+                , HA.style "width" "25vw"
+                , HA.readonly True
+                ]
+                [ model.context |> H.text ]
+            , H.textarea
+                [ HA.style "height" "500px"
+                , HA.style "width" "25vw"
+                , HA.readonly True
+                ]
+                [ model.expanded |> H.text ]
+            ]
+        , H.button [ HE.onClick Decode ] [ H.text "Decode" ]
+        ]
     }
