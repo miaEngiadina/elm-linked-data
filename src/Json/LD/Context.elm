@@ -1,4 +1,4 @@
-module Json.LD.Context exposing (Context, empty, decoder, update)
+module Json.LD.Context exposing (Context, decoder, empty, update)
 
 {-| JSON-LD Context
 
@@ -9,45 +9,11 @@ This module contains the context related algorithms described in "JSON-LD
 
 import Dict exposing (Dict)
 import Json.Decode as JD exposing (Decoder)
-import Json.Value exposing (JsonValue(..))
 import Json.LD.Error as Error exposing (Error(..))
-import List.Extra
+import Json.Value exposing (JsonValue(..))
 import RDF.IRI as IRI exposing (IRI)
 import Spaghetti as S exposing (State)
-
-
-
--- Association List helpers
-
-
-type alias AssocList a =
-    List ( String, a )
-
-
-{-| Get element with specified key from an association list
--}
-get : String -> AssocList a -> Maybe a
-get key assocList =
-    List.Extra.find (\( k, v ) -> k == key) assocList
-        |> Maybe.map Tuple.second
-
-
-{-| Remove entries with given key
--}
-remove : String -> AssocList a -> AssocList a
-remove key assocList =
-    List.filter (\( k, _ ) -> k /= key) assocList
-
-
-{-| Return list of keys in association list
--}
-keys : AssocList a -> List String
-keys =
-    List.map Tuple.first
-
-
-
---
+import AssocList as AL exposing (AssocList)
 
 
 {-| JSON-LD Context (see: <https://www.w3.org/TR/json-ld/#the-context>)
@@ -154,14 +120,14 @@ invokeCreateTermDefinition localContextWithStuffWeDontWant active =
         -- Remove @base @vocab and @language keys
         local =
             localContextWithStuffWeDontWant
-                |> remove "@base"
-                |> remove "@vocab"
-                |> remove "@language"
+                |> AL.remove "@base"
+                |> AL.remove "@vocab"
+                |> AL.remove "@language"
     in
     List.foldl
         (\term -> Result.andThen (createTermDefinition local term))
         (Ok ( active, Dict.empty ))
-        (keys local)
+        (AL.keys local)
         |> Result.map Tuple.first
 
 
@@ -197,7 +163,7 @@ createTermDefinition local term ( active, defined ) =
                 |> S.done
 
         getFromValue key x =
-            get key x.value
+            AL.get key x.value
     in
     { active = active
     , defined = defined
@@ -247,7 +213,7 @@ createTermDefinition local term ( active, defined ) =
                 { active = state.active
                 , defined = state.defined
                 , value =
-                    get term local
+                    AL.get term local
                         --  We always get a value back as we are iterating over keys of local.
                         |> Maybe.withDefault NullValue
                 }
@@ -263,7 +229,7 @@ createTermDefinition local term ( active, defined ) =
                             |> return
 
                     ObjectValue v ->
-                        case get "@id" v of
+                        case AL.get "@id" v of
                             Just NullValue ->
                                 state
                                     |> mapActive (\context -> { context | termDefinitions = context.termDefinitions |> Dict.remove term })
@@ -559,7 +525,7 @@ expandIRI active documentRelative vocab maybeLocal maybeDefined value =
             )
         -- 2) If local context is not null, it contains a key that equals value, and the value associated with the key that equals value in defined is not true, invoke the Create Term Definition algorithm, passing active context, local context, value as term, and defined. This will ensure that a term definition is created for value in active context during Context Processing.
         |> S.ifAndThen
-            (\state -> (Maybe.map (get value) state.local |> isJust) && not (Dict.get value state.defined |> Maybe.withDefault False))
+            (\state -> (Maybe.map (AL.get value) state.local |> isJust) && not (Dict.get value state.defined |> Maybe.withDefault False))
             (\state ->
                 case createTermDefinition (state.local |> Maybe.withDefault []) value ( state.active, state.defined ) of
                     Ok ( active_, defined_ ) ->
@@ -602,7 +568,7 @@ expandIRI active documentRelative vocab maybeLocal maybeDefined value =
                         )
                     -- 4.3) If local context is not null, it contains a key that equals prefix, and the value associated with the key that equals prefix in defined is not true, invoke the Create Term Definition algorithm, passing active context, local context, prefix as term, and defined. This will ensure that a term definition is created for prefix in active context during Context Processing.
                     |> S.ifAndThen
-                        (\state -> (Maybe.map (get prefix) state.local |> isJust) && not (Dict.get prefix state.defined |> Maybe.withDefault False))
+                        (\state -> (Maybe.map (AL.get prefix) state.local |> isJust) && not (Dict.get prefix state.defined |> Maybe.withDefault False))
                         (\state ->
                             case createTermDefinition (state.local |> Maybe.withDefault []) prefix ( state.active, state.defined ) of
                                 Ok ( active_, defined_ ) ->
@@ -672,7 +638,7 @@ updateBaseIRI remoteContexts contextValues result =
     -- 3.4) If context has an @base key and remote contexts is empty, i.e., the currently being processed context is not a remote context:
     case remoteContexts of
         [] ->
-            case get "@base" contextValues of
+            case AL.get "@base" contextValues of
                 Just NullValue ->
                     -- 3.4.2) If value is null, remove the base IRI of result.
                     Ok { result | baseIRI = Nothing }
@@ -709,7 +675,7 @@ updateBaseIRI remoteContexts contextValues result =
 updateVocabMapping : List ( String, JsonValue ) -> Context -> Result Error Context
 updateVocabMapping contextValues result =
     -- 3.5) If context has an @vocab key:
-    case get "@vocab" contextValues of
+    case AL.get "@vocab" contextValues of
         Just NullValue ->
             -- 3.5.2) If value is null, remove any vocabulary mapping from result.
             Ok { result | vocabularyMapping = Nothing }
@@ -734,7 +700,7 @@ updateVocabMapping contextValues result =
 
 updateDefaultLanguage : List ( String, JsonValue ) -> Context -> Result Error Context
 updateDefaultLanguage contextValues result =
-    case get "@language" contextValues of
+    case AL.get "@language" contextValues of
         -- 3.6) If context has an @language key:
         Just NullValue ->
             -- 3.6.2) If value is null, remove any default language from result.
@@ -796,7 +762,7 @@ decoder =
             (\json ->
                 case json of
                     ObjectValue values ->
-                        case get "@context" values of
+                        case AL.get "@context" values of
                             Nothing ->
                                 JD.succeed empty
 
