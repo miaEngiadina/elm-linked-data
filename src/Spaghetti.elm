@@ -9,6 +9,7 @@ module Spaghetti exposing
     , join
     , map
     , map2
+    , mapError
     , maybeAndThen
     , pure
     , toResult
@@ -125,6 +126,19 @@ map2 : (a -> b -> c) -> State error a result -> State error b result -> State er
 map2 f a b =
     a
         |> andThen (\a_ -> b |> map (f a_))
+
+
+mapError : (errorA -> errorB) -> State errorA value result -> State errorB value result
+mapError f x =
+    case x of
+        Error a ->
+            Error (f a)
+
+        Done result ->
+            Done result
+
+        Processing value ->
+            Processing value
 
 
 

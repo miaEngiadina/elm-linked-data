@@ -7,13 +7,13 @@ This module contains the context related algorithms described in "JSON-LD
 
 -}
 
+import AssocList as AL exposing (AssocList)
 import Dict exposing (Dict)
 import Json.Decode as JD exposing (Decoder)
 import Json.LD.Error as Error exposing (Error(..))
 import Json.Value exposing (JsonValue(..))
 import RDF.IRI as IRI exposing (IRI)
-import Spaghetti as S exposing (State)
-import AssocList as AL exposing (AssocList)
+import Spaghetti as S
 
 
 {-| JSON-LD Context (see: <https://www.w3.org/TR/json-ld/#the-context>)
@@ -64,20 +64,62 @@ type alias TermDefinition =
 
 
 
--- Error handling
+-- Spaghetti code handling helpers
+
+
+{-| The internal return type for algorithms and sub-algorithms
+-}
+type alias State value result =
+    S.State ( List String, Error ) value result
+
+
+
+-- Result ( List String, Error ) Context
+
+
+addErrorMsg : String -> State a result -> State a result
+addErrorMsg msg state =
+    state
+        |> S.mapError (\( stack, error ) -> ( msg :: stack, error ))
+
+
+{-| Bind operator that adds stack tracing like information for error handling
+-}
+andThen : String -> (a -> State b result) -> State a result -> State b result
+andThen msg f x =
+    S.andThen f x
+        |> addErrorMsg msg
+
+
+maybeAndThen : String -> (a -> Maybe b) -> (b -> a -> State a result) -> State a result -> State a result
+maybeAndThen msg get f x =
+    S.maybeAndThen get f x
+        |> addErrorMsg msg
+
+
+fail : String -> Error -> State value result
+fail msg error =
+    S.fail ( [ msg ], error )
+
+
+failWithStack : List String -> String -> Error -> State value result
+failWithStack stack msg error =
+    S.fail ( msg :: stack, error )
 
 
 {-| Helper to convert Result to Json.Decode.Decoder
 -}
-resultToDecoder : Result Error Context -> Decoder Context
+resultToDecoder : Result ( List String, Error ) Context -> Decoder Context
 resultToDecoder result =
     case result of
         Ok c ->
             JD.succeed c
 
-        Err e ->
+        Err ( ctx, e ) ->
             String.concat
-                [ "Processing JSON-LD context failed: "
+                [ "Processing JSON-LD context failed ("
+                , ctx |> String.join "."
+                , "): "
                 , e |> Error.toString
                 ]
                 |> JD.fail
@@ -89,46 +131,167 @@ resultToDecoder result =
 
 {-| Update active context with a local context (see <https://www.w3.org/TR/json-ld-api/#context-processing-algorithms>)
 -}
-update : List IRI -> JsonValue -> Context -> Result Error Context
+update : List IRI -> JsonValue -> Context -> Result ( List String, Error ) Context
 update remote localContextValue active =
-    case localContextValue of
-        NullValue ->
-            -- 3.1) If context is null, set result to a newly-initialized active context and continue with the next context. The base IRI of the active context is set to the IRI of the currently being processed document (which might be different from the currently being processed context), if available; otherwise to null. If set, the base option of a JSON-LD API Implementation overrides the base IRI.
-            Ok empty
-
-        StringValue value ->
-            -- 3.2) If context is a string,
-            Debug.todo "resolve remote context"
-
-        ObjectValue local ->
-            active
-                |> updateBaseIRI remote local
-                |> Result.andThen (updateVocabMapping local)
-                |> Result.andThen (updateDefaultLanguage local)
-                |> Result.andThen (invokeCreateTermDefinition local)
-
-        _ ->
-            -- 3.3) If context is not a JSON object, an invalid local context error has been detected and processing is aborted.
-            Err InvalidLocalContext
-
-
-{-| Helper to invoke the Create Term Definition Algorithm
--}
-invokeCreateTermDefinition : AssocList JsonValue -> Context -> Result Error Context
-invokeCreateTermDefinition localContextWithStuffWeDontWant active =
     let
-        -- Remove @base @vocab and @language keys
-        local =
-            localContextWithStuffWeDontWant
-                |> AL.remove "@base"
-                |> AL.remove "@vocab"
-                |> AL.remove "@language"
+        mapResult f x =
+            { x | result = f x.result }
     in
-    List.foldl
-        (\term -> Result.andThen (createTermDefinition local term))
-        (Ok ( active, Dict.empty ))
-        (AL.keys local)
-        |> Result.map Tuple.first
+    -- 1) Initialize result to the result of cloning active context.
+    { result = active }
+        |> S.pure
+        |> andThen "3"
+            (\state_ ->
+                case localContextValue of
+                    NullValue ->
+                        -- 3.1) If context is null, set result to a newly-initialized active context and continue with the next context. The base IRI of the active context is set to the IRI of the currently being processed document (which might be different from the currently being processed context), if available; otherwise to null. If set, the base option of a JSON-LD API Implementation overrides the base IRI.
+                        S.done empty
+
+                    StringValue value ->
+                        -- 3.2) If context is a string,
+                        Debug.todo "resolve remote context"
+
+                    ObjectValue local ->
+                        let
+                            getFromLocal key x =
+                                x.local |> AL.get key
+                        in
+                        { result = state_.result
+                        , local = local
+                        }
+                            |> S.pure
+                            |> maybeAndThen "4"
+                                (getFromLocal "@base")
+                                (\baseValue state ->
+                                    if List.isEmpty remote then
+                                        -- 3.4) If context has an @base key and remote contexts is empty, i.e., the currently being processed context is not a remote context:
+                                        case baseValue of
+                                            NullValue ->
+                                                -- 3.4.2) If value is null, remove the base IRI of result.
+                                                state
+                                                    |> mapResult (\result -> { result | baseIRI = Nothing })
+                                                    |> S.continue
+
+                                            StringValue value ->
+                                                let
+                                                    iri =
+                                                        IRI.fromString value
+                                                in
+                                                if IRI.isAbsolute iri then
+                                                    -- 3.4.3) Otherwise, if value is an absolute IRI, the base IRI of result is set to value.
+                                                    state
+                                                        |> mapResult (\result -> { result | baseIRI = Just iri })
+                                                        |> S.continue
+
+                                                else if IRI.isRelative iri then
+                                                    -- 3.4.4) Otherwise, if value is a relative IRI and the base IRI of result is not null, set the base IRI of result to the result of resolving value against the current base IRI of result.
+                                                    -- TODO: "resolve against the current base IRI"
+                                                    state
+                                                        |> mapResult
+                                                            (\result -> { result | baseIRI = Just iri })
+                                                        |> S.continue
+
+                                                else
+                                                    -- 3.4.5) Otherwise, an invalid base IRI error has been detected and processing is aborted.
+                                                    fail "5" InvalidBaseIRI
+
+                                            _ ->
+                                                -- 3.4.5) Otherwise, an invalid base IRI error has been detected and processing is aborted.
+                                                fail "5" InvalidBaseIRI
+
+                                    else
+                                        state |> S.continue
+                                )
+                            |> maybeAndThen "5"
+                                (getFromLocal "@vocab")
+                                (\vocabValue state ->
+                                    case vocabValue of
+                                        NullValue ->
+                                            -- 3.5.2) If value is null, remove any vocabulary mapping from result.
+                                            state
+                                                |> mapResult (\result -> { result | vocabularyMapping = Nothing })
+                                                |> S.continue
+
+                                        StringValue value ->
+                                            -- 3.5.3) Otherwise, if value is an absolute IRI or blank node identifier, the vocabulary mapping of result is set to value. If it is not an absolute IRI or blank node identifier, an invalid vocab mapping error has been detected and processing is aborted.
+                                            if IRI.fromString value |> IRI.isAbsolute then
+                                                state
+                                                    |> mapResult (\result -> { result | vocabularyMapping = Just value })
+                                                    |> S.continue
+
+                                            else if isBlankNodeIdentifier value then
+                                                state
+                                                    |> mapResult (\result -> { result | vocabularyMapping = Just value })
+                                                    |> S.continue
+
+                                            else
+                                                fail "5" InvalidVocabMapping
+
+                                        _ ->
+                                            fail "5" InvalidVocabMapping
+                                )
+                            |> maybeAndThen "6"
+                                (getFromLocal "@language")
+                                (\languageValue state ->
+                                    case languageValue of
+                                        -- 3.6) If context has an @language key:
+                                        NullValue ->
+                                            -- 3.6.2) If value is null, remove any default language from result.
+                                            state
+                                                |> mapResult (\result -> { result | defaultLanguage = Nothing })
+                                                |> S.continue
+
+                                        StringValue value ->
+                                            -- 3.6.3) Otherwise, if value is string, the default language of result is set to lowercased value.
+                                            state
+                                                |> mapResult
+                                                    (\result ->
+                                                        { result | defaultLanguage = value |> String.toLower |> Just }
+                                                    )
+                                                |> S.continue
+
+                                        _ ->
+                                            -- If it is not a string, an invalid default language error has been detected and processing is aborted.
+                                            fail "" InvalidDefaultLanguage
+                                )
+                            |> andThen "7"
+                                -- 3.7) Create a JSON object defined to use to keep track of whether or not a term has already been defined or currently being defined during recursion.
+                                (\state ->
+                                    { result = state.result
+                                    , local = state.local
+                                    , defined = Dict.empty
+                                    }
+                                        |> S.pure
+                                )
+                            |> andThen "8"
+                                (\state__ ->
+                                    List.foldl
+                                        (\term ->
+                                            S.andThen
+                                                (\state ->
+                                                    case createTermDefinition state.local term state.result state.defined of
+                                                        Ok ( result, defined ) ->
+                                                            { state | result = result, defined = defined }
+                                                                |> S.continue
+
+                                                        Err ( stack, error ) ->
+                                                            failWithStack stack ("createTermDefinition(" ++ term ++ ")") error
+                                                )
+                                        )
+                                        (S.pure state__)
+                                        (state__.local
+                                            |> AL.remove "@base"
+                                            |> AL.remove "@vocab"
+                                            |> AL.remove "@language"
+                                            |> AL.keys
+                                        )
+                                )
+
+                    _ ->
+                        -- 3.3) If context is not a JSON object, an invalid local context error has been detected and processing is aborted.
+                        fail "3" InvalidLocalContext
+            )
+        |> S.toResult (\_ -> Err ( [], InvalidLocalContext ))
 
 
 {-| 6.2 Create Term Definition
@@ -136,8 +299,8 @@ invokeCreateTermDefinition localContextWithStuffWeDontWant active =
 This algorithm is called from the Context Processing algorithm to create a term definition in the active context for a term being processed in a local context.
 
 -}
-createTermDefinition : AssocList JsonValue -> String -> ( Context, Dict String Bool ) -> Result Error ( Context, Dict String Bool )
-createTermDefinition local term ( active, defined ) =
+createTermDefinition : AssocList JsonValue -> String -> Context -> Dict String Bool -> Result ( List String, Error ) ( Context, Dict String Bool )
+createTermDefinition local term active defined =
     let
         -- Helpers to map state fields
         mapActive f x =
@@ -180,8 +343,7 @@ createTermDefinition local term ( active, defined ) =
 
                     Just False ->
                         -- Otherwise, if the value is false, a cyclic IRI mapping error has been detected and processing is aborted.
-                        CyclicIRIMapping
-                            |> S.fail
+                        fail "1" CyclicIRIMapping
 
                     Nothing ->
                         state
@@ -193,8 +355,7 @@ createTermDefinition local term ( active, defined ) =
         |> S.andThen
             (\state ->
                 if List.member term keywords then
-                    KeywordRedefinition
-                        |> S.fail
+                    fail "3" KeywordRedefinition
 
                 else
                     state
@@ -263,8 +424,7 @@ createTermDefinition local term ( active, defined ) =
 
                     _ ->
                         -- Otherwise, value must be a JSON object, if not, an invalid term definition error has been detected and processing is aborted.
-                        InvalidTermDefinition
-                            |> S.fail
+                        fail "8" InvalidTermDefinition
             )
         -- 9) Create a new term definition, definition.
         |> S.map
@@ -308,8 +468,7 @@ createTermDefinition local term ( active, defined ) =
 
                     _ ->
                         -- Otherwise, an invalid type mapping error has been detected and processing is aborted.
-                        InvalidTypeMapping
-                            |> S.fail
+                        fail "10" InvalidTypeMapping
             )
         -- 11) If value contains the key @reverse:
         |> S.maybeAndThen (getFromValue "@reverse")
@@ -317,7 +476,7 @@ createTermDefinition local term ( active, defined ) =
                 state_
                     |> S.continue
                     -- 11.1) If value contains an @id, member, an invalid reverse property error has been detected and processing is aborted.
-                    |> S.maybeAndThen (getFromValue "@id") (\_ _ -> InvalidReverseProperty |> S.fail)
+                    |> S.maybeAndThen (getFromValue "@id") (\_ _ -> InvalidReverseProperty |> fail "11.1")
                     -- 11.2) If the value associated with the @reverse key is not a string, an invalid IRI mapping error has been detected and processing is aborted.
                     |> S.andThen
                         (\state ->
@@ -326,7 +485,7 @@ createTermDefinition local term ( active, defined ) =
                                     state |> S.continue
 
                                 _ ->
-                                    InvalidIRIMapping |> S.fail
+                                    fail "11.2" InvalidIRIMapping
                         )
                     -- 11.3) Otherwise, set the IRI mapping of definition to the result of using the IRI Expansion algorithm, passing active context, the value associated with the @reverse key for value, true for vocab, false for document relative, local context, and defined. If the result is neither an absolute IRI nor a blank node identifier, i.e., it contains no colon (:), an invalid IRI mapping error has been detected and processing is aborted.
                     |> S.andThen
@@ -336,7 +495,7 @@ createTermDefinition local term ( active, defined ) =
                                     case expandIRI state.active False True (Just local) (Just state.defined) reverse of
                                         Ok expandedReverseMapping ->
                                             if not (String.contains ":" expandedReverseMapping) then
-                                                InvalidIRIMapping |> S.fail
+                                                InvalidIRIMapping |> fail "11.3"
 
                                             else
                                                 state
@@ -347,7 +506,7 @@ createTermDefinition local term ( active, defined ) =
                                             e |> S.fail
 
                                 _ ->
-                                    InvalidIRIMapping |> S.fail
+                                    InvalidIRIMapping |> fail "11"
                         )
                     -- 11.4) If value contains an @container member, set the container mapping of definition to its value; if its value is neither @set, nor @index, nor null, an invalid reverse property error has been detected (reverse properties only support set- and index-containers) and processing is aborted.
                     |> S.maybeAndThen (getFromValue "@container")
@@ -370,7 +529,7 @@ createTermDefinition local term ( active, defined ) =
 
                                 _ ->
                                     InvalidReverseProperty
-                                        |> S.fail
+                                        |> fail "11.4"
                         )
                     -- 11.5) Set the reverse property flag of definition to true.
                     |> S.map (mapDefinition (\definition -> { definition | reverse = True }))
@@ -400,10 +559,10 @@ createTermDefinition local term ( active, defined ) =
                         case expandIRI state.active False True (Just local) (Just state.defined) idValue of
                             Ok expandedIdValue ->
                                 if not (String.contains ":" expandedIdValue || List.member expandedIdValue keywords) then
-                                    InvalidIRIMapping |> S.fail
+                                    InvalidIRIMapping |> fail "13.2"
 
                                 else if expandedIdValue == "@context" then
-                                    InvalidKeywordAlias |> S.fail
+                                    InvalidKeywordAlias |> fail "13.2"
 
                                 else
                                     state
@@ -416,7 +575,7 @@ createTermDefinition local term ( active, defined ) =
                     _ ->
                         -- 13.1) If the value associated with the @id key is not a string, an invalid IRI mapping error has been detected and processing is aborted.
                         InvalidIRIMapping
-                            |> S.fail
+                            |> fail "13.1"
             )
         -- 14)  Otherwise if the term contains a colon (:):
         |> S.ifAndThen
@@ -440,7 +599,7 @@ createTermDefinition local term ( active, defined ) =
                             |> S.continue
 
                     Nothing ->
-                        InvalidIRIMapping |> S.fail
+                        InvalidIRIMapping |> fail "15"
             )
         -- 16) If value contains the key @container:
         |> S.maybeAndThen (getFromValue "@container")
@@ -456,11 +615,11 @@ createTermDefinition local term ( active, defined ) =
 
                         else
                             InvalidContainerMapping
-                                |> S.fail
+                                |> fail "16"
 
                     _ ->
                         InvalidContainerMapping
-                            |> S.fail
+                            |> fail "16"
             )
         -- 17) If value contains the key @language and does not contain the key @type:
         |> S.maybeAndThen
@@ -493,7 +652,7 @@ createTermDefinition local term ( active, defined ) =
 
                     _ ->
                         InvalidLanguageMapping
-                            |> S.fail
+                            |> fail "17"
             )
         -- 18) Set the term definition of term in active context to definition and set the value associated with defined's key term to true.
         |> S.map setDefinitionInActiveContext
@@ -501,10 +660,10 @@ createTermDefinition local term ( active, defined ) =
         -- Algorithm ends (implicit return)
         |> S.andThen return
         -- Return as Result
-        |> S.toResult (\a -> Err InvalidLocalContext)
+        |> S.toResult (\_ -> Err ( [], InvalidLocalContext ))
 
 
-expandIRI : Context -> Bool -> Bool -> Maybe (AssocList JsonValue) -> Maybe (Dict String Bool) -> String -> Result Error String
+expandIRI : Context -> Bool -> Bool -> Maybe (AssocList JsonValue) -> Maybe (Dict String Bool) -> String -> Result ( List String, Error ) String
 expandIRI active documentRelative vocab maybeLocal maybeDefined value =
     { value = value
     , active = active
@@ -527,7 +686,7 @@ expandIRI active documentRelative vocab maybeLocal maybeDefined value =
         |> S.ifAndThen
             (\state -> (Maybe.map (AL.get value) state.local |> isJust) && not (Dict.get value state.defined |> Maybe.withDefault False))
             (\state ->
-                case createTermDefinition (state.local |> Maybe.withDefault []) value ( state.active, state.defined ) of
+                case createTermDefinition (state.local |> Maybe.withDefault []) value state.active state.defined of
                     Ok ( active_, defined_ ) ->
                         { state
                             | active = active
@@ -570,7 +729,7 @@ expandIRI active documentRelative vocab maybeLocal maybeDefined value =
                     |> S.ifAndThen
                         (\state -> (Maybe.map (AL.get prefix) state.local |> isJust) && not (Dict.get prefix state.defined |> Maybe.withDefault False))
                         (\state ->
-                            case createTermDefinition (state.local |> Maybe.withDefault []) prefix ( state.active, state.defined ) of
+                            case createTermDefinition (state.local |> Maybe.withDefault []) prefix state.active state.defined of
                                 Ok ( active_, defined_ ) ->
                                     { state
                                         | active = active
@@ -621,101 +780,12 @@ expandIRI active documentRelative vocab maybeLocal maybeDefined value =
         -- 7) Return value as is.
         |> S.andThen (\state -> state.value |> S.done)
         |> Debug.log "expandIRI"
-        |> S.toResult (\a -> Err InvalidLocalContext)
+        |> S.toResult (\_ -> Err ( [], InvalidLocalContext ))
 
 
 isJust : Maybe a -> Bool
 isJust maybe =
     maybe |> Maybe.map (\_ -> True) |> Maybe.withDefault False
-
-
-
--- update helpers
-
-
-updateBaseIRI : List String -> AssocList JsonValue -> Context -> Result Error Context
-updateBaseIRI remoteContexts contextValues result =
-    -- 3.4) If context has an @base key and remote contexts is empty, i.e., the currently being processed context is not a remote context:
-    case remoteContexts of
-        [] ->
-            case AL.get "@base" contextValues of
-                Just NullValue ->
-                    -- 3.4.2) If value is null, remove the base IRI of result.
-                    Ok { result | baseIRI = Nothing }
-
-                Just (StringValue value) ->
-                    let
-                        iri =
-                            IRI.fromString value
-                    in
-                    if IRI.isAbsolute iri then
-                        -- 3.4.3) Otherwise, if value is an absolute IRI, the base IRI of result is set to value.
-                        Ok { result | baseIRI = Just iri }
-
-                    else if IRI.isRelative iri then
-                        -- 3.4.4) Otherwise, if value is a relative IRI and the base IRI of result is not null, set the base IRI of result to the result of resolving value against the current base IRI of result.
-                        -- TODO: "resolve against the current base IRI"
-                        Ok { result | baseIRI = Just iri }
-
-                    else
-                        -- 3.4.5) Otherwise, an invalid base IRI error has been detected and processing is aborted.
-                        Err InvalidBaseIRI
-
-                Just _ ->
-                    -- 3.4.5) Otherwise, an invalid base IRI error has been detected and processing is aborted.
-                    Err InvalidBaseIRI
-
-                Nothing ->
-                    Ok result
-
-        _ ->
-            Ok result
-
-
-updateVocabMapping : List ( String, JsonValue ) -> Context -> Result Error Context
-updateVocabMapping contextValues result =
-    -- 3.5) If context has an @vocab key:
-    case AL.get "@vocab" contextValues of
-        Just NullValue ->
-            -- 3.5.2) If value is null, remove any vocabulary mapping from result.
-            Ok { result | vocabularyMapping = Nothing }
-
-        Just (StringValue value) ->
-            -- 3.5.3) Otherwise, if value is an absolute IRI or blank node identifier, the vocabulary mapping of result is set to value. If it is not an absolute IRI or blank node identifier, an invalid vocab mapping error has been detected and processing is aborted.
-            if IRI.fromString value |> IRI.isAbsolute then
-                Ok { result | vocabularyMapping = Just value }
-
-            else if isBlankNodeIdentifier value then
-                Ok { result | vocabularyMapping = Just value }
-
-            else
-                Err InvalidVocabMapping
-
-        Just _ ->
-            Err InvalidVocabMapping
-
-        Nothing ->
-            Ok result
-
-
-updateDefaultLanguage : List ( String, JsonValue ) -> Context -> Result Error Context
-updateDefaultLanguage contextValues result =
-    case AL.get "@language" contextValues of
-        -- 3.6) If context has an @language key:
-        Just NullValue ->
-            -- 3.6.2) If value is null, remove any default language from result.
-            Ok { result | defaultLanguage = Nothing }
-
-        Just (StringValue value) ->
-            -- 3.6.3) Otherwise, if value is string, the default language of result is set to lowercased value.
-            Ok { result | defaultLanguage = value |> String.toLower |> Just }
-
-        Just _ ->
-            -- If it is not a string, an invalid default language error has been detected and processing is aborted.
-            Err InvalidDefaultLanguage
-
-        Nothing ->
-            Ok result
 
 
 
