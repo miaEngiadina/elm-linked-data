@@ -86,8 +86,8 @@ update msg model =
                     case model.input |> Json.Decode.decodeString Json.Value.decoder |> Result.map (Json.LD.expand Context.empty) of
                         Ok expanded ->
                             expanded
-                                  |> Json.Value.encode
-                                  |> Json.Encode.encode 4
+                                |> Json.Value.encode
+                                |> Json.Encode.encode 4
 
                         Err e ->
                             e |> Json.Decode.errorToString

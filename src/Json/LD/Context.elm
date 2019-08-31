@@ -97,6 +97,12 @@ maybeAndThen msg get f x =
         |> addErrorMsg msg
 
 
+ifAndThen : String -> (a -> Bool) -> (a -> State a result) -> State a result -> State a result
+ifAndThen msg condition f x =
+    S.ifAndThen condition f x
+        |> addErrorMsg msg
+
+
 fail : String -> Error -> State value result
 fail msg error =
     S.fail ( [ msg ], error )
@@ -291,6 +297,9 @@ update remote localContextValue active =
                         -- 3.3) If context is not a JSON object, an invalid local context error has been detected and processing is aborted.
                         fail "3" InvalidLocalContext
             )
+        -- 4) Return result.
+        |> andThen "4" (\state -> state.result |> S.done)
+        |> addErrorMsg "update"
         |> S.toResult (\_ -> Err ( [], InvalidLocalContext ))
 
 
@@ -540,46 +549,57 @@ createTermDefinition local term active defined =
             )
         -- 12) Set the reverse property flag of definition to false.
         |> S.map (mapDefinition (\definition -> { definition | reverse = False }))
-        -- 13) If value contains the key @id and its value does not equal term:
-        |> S.maybeAndThen
-            (getFromValue "@id"
-                >> Maybe.andThen
-                    (\idValue ->
-                        if idValue == StringValue term then
-                            Nothing
+        |> andThen "13"
+            (\state ->
+                -- 13) If value contains the key @id and its value does not equal term:
+                case getFromValue "@id" state |> Maybe.andThen (jsonValueIsStringAndNotEqual term) of
+                    Just idValue ->
+                        if idValue /= term then
+                            -- 13.2) Otherwise, set the IRI mapping of definition to the result of using the IRI Expansion algorithm, passing active context, the value associated with the @id key for value, true for vocab, false for document relative, local context, and defined. If the resulting IRI mapping is neither a keyword, nor an absolute IRI, nor a blank node identifier, an invalid IRI mapping error has been detected and processing is aborted; if it equals @context, an invalid keyword alias error has been detected and processing is aborted.
+                            case expandIRI state.active False True (Just local) (Just state.defined) idValue of
+                                Ok expandedIdValue ->
+                                    if not (String.contains ":" expandedIdValue || List.member expandedIdValue keywords) then
+                                        fail "2" InvalidIRIMapping
+
+                                    else if expandedIdValue == "@context" then
+                                        fail "2" InvalidKeywordAlias
+
+                                    else
+                                        state
+                                            |> mapDefinition (\definition -> { definition | mapping = expandedIdValue })
+                                            |> S.continue
+
+                                Err e ->
+                                    e
+                                        |> S.fail
+                                        |> addErrorMsg "expandIRI"
 
                         else
-                            Just idValue
-                    )
+                            state |> S.continue
+
+                    Nothing ->
+                        state |> S.continue
             )
-            (\idValue_ state ->
-                case idValue_ of
-                    StringValue idValue ->
-                        -- 13.2) Otherwise, set the IRI mapping of definition to the result of using the IRI Expansion algorithm, passing active context, the value associated with the @id key for value, true for vocab, false for document relative, local context, and defined. If the resulting IRI mapping is neither a keyword, nor an absolute IRI, nor a blank node identifier, an invalid IRI mapping error has been detected and processing is aborted; if it equals @context, an invalid keyword alias error has been detected and processing is aborted.
-                        case expandIRI state.active False True (Just local) (Just state.defined) idValue of
-                            Ok expandedIdValue ->
-                                if not (String.contains ":" expandedIdValue || List.member expandedIdValue keywords) then
-                                    InvalidIRIMapping |> fail "13.2"
-
-                                else if expandedIdValue == "@context" then
-                                    InvalidKeywordAlias |> fail "13.2"
-
-                                else
-                                    state
-                                        |> mapDefinition (\definition -> { definition | mapping = expandedIdValue })
-                                        |> S.continue
-
-                            Err e ->
-                                e |> S.fail
+        |> maybeAndThen "13"
+            (getFromValue "@id")
+            (\idValue state ->
+                -- 13.1) If the value associated with the @id key is not a string, an invalid IRI mapping error has been detected and processing is aborted.
+                case idValue of
+                    StringValue _ ->
+                        state |> S.continue
 
                     _ ->
-                        -- 13.1) If the value associated with the @id key is not a string, an invalid IRI mapping error has been detected and processing is aborted.
-                        InvalidIRIMapping
-                            |> fail "13.1"
+                        fail "1" InvalidIRIMapping
             )
         -- 14)  Otherwise if the term contains a colon (:):
-        |> S.ifAndThen
-            (\_ -> String.contains ":" term)
+        |> ifAndThen "14"
+            (\state ->
+                -- This is the negation of the condition for 13. Yes, that otherwise is tricky.
+                getFromValue "@id" state
+                    |> Maybe.andThen (jsonValueIsStringAndNotEqual term)
+                    |> isJust
+                    |> not
+            )
             (\state_ ->
                 state_ |> S.continue
              -- 14.1) If term is a compact IRI with a prefix that is a key in local context a dependency has been found. Use this algorithm recursively passing active context, local context, the prefix as term, and defined.
@@ -590,7 +610,14 @@ createTermDefinition local term active defined =
              -- TODO
             )
         -- 15) Otherwise, if active context has a vocabulary mapping, the IRI mapping of definition is set to the result of concatenating the value associated with the vocabulary mapping and term. If it does not have a vocabulary mapping, an invalid IRI mapping error been detected and processing is aborted.
-        |> S.andThen
+        |> ifAndThen "15"
+            (\state ->
+                -- This is the negation of the condition for 13. Yes, that otherwise is tricky.
+                getFromValue "@id" state
+                    |> Maybe.andThen (jsonValueIsStringAndNotEqual term)
+                    |> isJust
+                    |> not
+            )
             (\state ->
                 case state.active.vocabularyMapping of
                     Just vocabularyMapping ->
@@ -599,10 +626,11 @@ createTermDefinition local term active defined =
                             |> S.continue
 
                     Nothing ->
-                        InvalidIRIMapping |> fail "15"
+                        InvalidIRIMapping |> fail ""
             )
         -- 16) If value contains the key @container:
-        |> S.maybeAndThen (getFromValue "@container")
+        |> maybeAndThen "16"
+            (getFromValue "@container")
             (\containerValue state ->
                 -- 16.1) Initialize container to the value associated with the @container key, which must be either @list, @set, @index, or @language. Otherwise, an invalid container mapping error has been detected and processing is aborted.
                 case containerValue of
@@ -615,14 +643,14 @@ createTermDefinition local term active defined =
 
                         else
                             InvalidContainerMapping
-                                |> fail "16"
+                                |> fail ""
 
                     _ ->
                         InvalidContainerMapping
-                            |> fail "16"
+                            |> fail ""
             )
         -- 17) If value contains the key @language and does not contain the key @type:
-        |> S.maybeAndThen
+        |> maybeAndThen "17"
             (\state ->
                 case getFromValue "@type" state of
                     Nothing ->
@@ -652,7 +680,7 @@ createTermDefinition local term active defined =
 
                     _ ->
                         InvalidLanguageMapping
-                            |> fail "17"
+                            |> fail "1"
             )
         -- 18) Set the term definition of term in active context to definition and set the value associated with defined's key term to true.
         |> S.map setDefinitionInActiveContext
@@ -660,7 +688,7 @@ createTermDefinition local term active defined =
         -- Algorithm ends (implicit return)
         |> S.andThen return
         -- Return as Result
-        |> S.toResult (\_ -> Err ( [], InvalidLocalContext ))
+        |> S.toResult (\_ -> Err ( ["yo"], InvalidLocalContext ))
 
 
 expandIRI : Context -> Bool -> Bool -> Maybe (AssocList JsonValue) -> Maybe (Dict String Bool) -> String -> Result ( List String, Error ) String
@@ -779,13 +807,28 @@ expandIRI active documentRelative vocab maybeLocal maybeDefined value =
             )
         -- 7) Return value as is.
         |> S.andThen (\state -> state.value |> S.done)
-        |> Debug.log "expandIRI"
         |> S.toResult (\_ -> Err ( [], InvalidLocalContext ))
 
 
 isJust : Maybe a -> Bool
 isJust maybe =
     maybe |> Maybe.map (\_ -> True) |> Maybe.withDefault False
+
+
+{-| Helper for something that may be easy to write, but I'm too drunk
+-}
+jsonValueIsStringAndNotEqual : String -> JsonValue -> Maybe String
+jsonValueIsStringAndNotEqual string json =
+    case json of
+        StringValue s ->
+            if s /= string then
+                Just s
+
+            else
+                Nothing
+
+        _ ->
+            Nothing
 
 
 
