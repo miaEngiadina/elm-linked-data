@@ -12,6 +12,7 @@ import Json.Decode
 import Json.Encode
 import Json.LD
 import Json.LD.Context as Context
+import Json.LD.Error
 import Json.Value
 import RDF
 import Return exposing (Return)
@@ -83,14 +84,22 @@ update msg model =
                         |> Json.Decode.decodeString Context.decoder
                         |> Debug.toString
                 , expanded =
-                    case model.input |> Json.Decode.decodeString Json.Value.decoder |> Result.map (Json.LD.expand Context.empty) of
+                    case
+                        model.input
+                            |> Json.Decode.decodeString Json.Value.decoder
+                            |> Result.mapError Json.Decode.errorToString
+                            |> Result.andThen
+                                (Json.LD.expand Context.empty
+                                    >> Result.mapError Json.LD.Error.toString
+                                )
+                    of
                         Ok expanded ->
                             expanded
                                 |> Json.Value.encode
                                 |> Json.Encode.encode 4
 
                         Err e ->
-                            e |> Json.Decode.errorToString
+                            e
             }
                 |> Return.singleton
 

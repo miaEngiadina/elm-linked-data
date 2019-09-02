@@ -1,4 +1,13 @@
-module Json.LD.Context exposing (Context, decoder, empty, update)
+module Json.LD.Context exposing
+    ( Context
+    , decoder
+    , empty
+    , expandIRI
+    , getLanguageMapping
+    , getTermDefinition
+    , getTypeMapping
+    , update
+    )
 
 {-| JSON-LD Context
 
@@ -61,6 +70,33 @@ type alias TermDefinition =
     -- and an optional container mapping.
     , containerMapping : Maybe String
     }
+
+
+
+-- Helpers to get stuff from Context
+
+
+{-| Get term definition for a given term
+-}
+getTermDefinition : Context -> String -> Maybe TermDefinition
+getTermDefinition context property =
+    Dict.get property context.termDefinitions
+
+
+{-| Get type mapping for a given term
+-}
+getTypeMapping : Context -> String -> Maybe String
+getTypeMapping context property =
+    getTermDefinition context property
+        |> Maybe.andThen .typeMapping
+
+
+{-| Get language mapping for a given term
+-}
+getLanguageMapping : Context -> String -> Maybe String
+getLanguageMapping context property =
+    getTermDefinition context property
+        |> Maybe.andThen .languageMapping
 
 
 
@@ -688,9 +724,11 @@ createTermDefinition local term active defined =
         -- Algorithm ends (implicit return)
         |> S.andThen return
         -- Return as Result
-        |> S.toResult (\_ -> Err ( ["yo"], InvalidLocalContext ))
+        |> S.toResult (\_ -> Err ( [ "yo" ], InvalidLocalContext ))
 
 
+{-| TODO: Document and clean up interface
+-}
 expandIRI : Context -> Bool -> Bool -> Maybe (AssocList JsonValue) -> Maybe (Dict String Bool) -> String -> Result ( List String, Error ) String
 expandIRI active documentRelative vocab maybeLocal maybeDefined value =
     { value = value

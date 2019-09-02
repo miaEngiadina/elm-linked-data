@@ -7,7 +7,8 @@ module Json.LD.Error exposing (Error(..), toString)
 {-| Error that may occur during JSON-LD processing
 -}
 type Error
-    = InvalidLocalContext
+    = -- Errors as defined by specification
+      InvalidLocalContext
     | InvalidBaseIRI
     | InvalidVocabMapping
     | InvalidDefaultLanguage
@@ -20,6 +21,8 @@ type Error
     | InvalidContainerMapping
     | InvalidLanguageMapping
     | InvalidKeywordAlias
+      -- Implementation errors
+    | AlgorithmDidNotReturn
 
 
 {-| Json.Decode requires errors to be printable as string
@@ -65,3 +68,6 @@ toString error =
 
         InvalidKeywordAlias ->
             "An invalid keyword alias definition has been encountered."
+
+        AlgorithmDidNotReturn ->
+            "Algorithm did not return"
