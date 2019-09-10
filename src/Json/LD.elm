@@ -181,34 +181,56 @@ expansionAlgorithm context activeProperty element_ =
                                 )
                             -- 7) For each key and value in element, ordered lexicographically by key:
                             |> S.andThen
-                                (\state ->
+                                (\state_ ->
                                     List.foldl
-                                        (\( key, value ) s ->
-                                            if key == "@context" then
-                                                -- 7.1) If key is @context, continue to the next key.
-                                                s
+                                        (\( key, value ) ->
+                                            S.andThen
+                                                (\state ->
+                                                    if key == "@context" then
+                                                        -- 7.1) If key is @context, continue to the next key.
+                                                        state |> continue
 
-                                            else
-                                                -- 7.2) Set expanded property to the result of using the IRI Expansion algorithm, passing active context, key for value, and true for vocab.
-                                                case Context.expandIRI state.context False True Nothing Nothing key of
-                                                    Ok expandedProperty ->
-                                                        if String.isEmpty expandedProperty || (not (String.contains ":" expandedProperty) && not (List.member expandedProperty Context.keywords)) then
-                                                            -- 7.3) If expanded property is null or it neither contains a colon (:) nor it is a keyword, drop key by continuing to the next key.
-                                                            s
+                                                    else
+                                                        case Context.expandIRI state.context False True Nothing Nothing key of
+                                                            Ok expandedProperty ->
+                                                                -- 7.2) Set expanded property to the result of using the IRI Expansion algorithm, passing active context, key for value, and true for vocab.
+                                                                if String.isEmpty expandedProperty || (not (String.contains ":" expandedProperty) && not (List.member expandedProperty Context.keywords)) then
+                                                                    -- 7.3) If expanded property is null or it neither contains a colon (:) nor it is a keyword, drop key by continuing to the next key.
+                                                                    state |> continue
 
-                                                        else if List.member expandedProperty Context.keywords then
-                                                            -- 7.4) If expanded property is a keyword:
-                                                            -- TODO
-                                                            s
+                                                                else if List.member expandedProperty Context.keywords then
+                                                                    -- 7.4) If expanded property is a keyword:
+                                                                    if maybeStringEqual "@reverse" activeProperty then
+                                                                        -- 7.4.1) If active property equals @reverse, an invalid reverse property map error has been detected and processing is aborted.
+                                                                        InvalidReverseProperty |> S.fail
 
-                                                        else
-                                                            s
+                                                                    else if AL.member expandedProperty state.result then
+                                                                        -- 7.4.2) If result has already an expanded property member, an colliding keywords error has been detected and processing is aborted.
+                                                                        CollidingKeywords |> S.fail
 
-                                                    Err ( _, e ) ->
-                                                        e |> S.fail
+                                                                    else if expandedProperty == "@id" then
+                                                                        -- 7.4.3) If expanded property is @id and value is not a string, an invalid @id value error has been detected and processing is aborted. Otherwise, set expanded value to the result of using the IRI Expansion algorithm, passing active context, value, and true for document relative.
+                                                                        case value of
+                                                                            StringValue stringValue ->
+                                                                                -- TODO
+                                                                                DeveloperGivingUp |> S.fail
+
+                                                                            _ ->
+                                                                                InvalidIDValue |> S.fail
+
+                                                                    else
+                                                                        -- TODO
+                                                                        state |> continue
+
+                                                                else
+                                                                    state |> continue
+
+                                                            Err ( _, e ) ->
+                                                                e |> S.fail
+                                                )
                                         )
-                                        (state |> S.pure)
-                                        state.elementValues
+                                        (state_ |> S.pure)
+                                        state_.elementValues
                                 )
                             |> S.map (\{ result } -> ObjectValue result)
 
@@ -340,3 +362,22 @@ valueExpansion context_ property_ value_ =
                 state.result |> ObjectValue |> return
             )
         |> S.toResult (\_ -> Err AlgorithmDidNotReturn)
+
+
+{-| Compare a string with a maybe string and default to False if maybe string is Nothing.
+-}
+maybeStringEqual : String -> Maybe String -> Bool
+maybeStringEqual a maybeB =
+    maybeB
+        |> Maybe.map ((==) a)
+        |> Maybe.withDefault False
+
+
+jsonValueIsString : JsonValue -> Bool
+jsonValueIsString jsonValue =
+    case jsonValue of
+        StringValue _ ->
+            True
+
+        _ ->
+            False

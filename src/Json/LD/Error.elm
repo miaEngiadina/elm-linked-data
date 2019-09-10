@@ -22,8 +22,11 @@ type Error
     | InvalidLanguageMapping
     | InvalidKeywordAlias
     | ListOfLists
+    | CollidingKeywords
+    | InvalidIDValue
       -- Implementation errors
     | AlgorithmDidNotReturn
+    | DeveloperGivingUp
 
 
 {-| Json.Decode requires errors to be printable as string
@@ -73,5 +76,14 @@ toString error =
         ListOfLists ->
             "A list of lists was detected. List of lists are not supported in this version of JSON-LD due to the algorithmic complexity."
 
+        CollidingKeywords ->
+            "Two properties which expand to the same keyword have been detected. This might occur if a keyword and an alias thereof are used at the same time."
+
+        InvalidIDValue ->
+            "An @id member was encountered whose value was not a string."
+
         AlgorithmDidNotReturn ->
             "Algorithm did not return"
+
+        DeveloperGivingUp ->
+            "This shit is just not nice"
