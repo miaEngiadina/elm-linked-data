@@ -21,6 +21,7 @@ type Error
     | InvalidContainerMapping
     | InvalidLanguageMapping
     | InvalidKeywordAlias
+    | ListOfLists
       -- Implementation errors
     | AlgorithmDidNotReturn
 
@@ -68,6 +69,9 @@ toString error =
 
         InvalidKeywordAlias ->
             "An invalid keyword alias definition has been encountered."
+
+        ListOfLists ->
+            "A list of lists was detected. List of lists are not supported in this version of JSON-LD due to the algorithmic complexity."
 
         AlgorithmDidNotReturn ->
             "Algorithm did not return"

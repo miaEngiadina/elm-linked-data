@@ -3,10 +3,12 @@ module Json.LD.Context exposing
     , decoder
     , empty
     , expandIRI
+    , getContainerMapping
     , getLanguageMapping
     , getTermDefinition
     , getTypeMapping
-    , update
+    , keywords
+    ,  update
     )
 
 {-| JSON-LD Context
@@ -97,6 +99,14 @@ getLanguageMapping : Context -> String -> Maybe String
 getLanguageMapping context property =
     getTermDefinition context property
         |> Maybe.andThen .languageMapping
+
+
+{-| Get container mapping for a given term
+-}
+getContainerMapping : Context -> String -> Maybe String
+getContainerMapping context property =
+    getTermDefinition context property
+        |> Maybe.andThen .containerMapping
 
 
 

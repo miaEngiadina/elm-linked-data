@@ -2,6 +2,7 @@ module AssocList exposing
     ( AssocList
     , get
     , keys
+    , member
     , remove
     )
 
@@ -35,3 +36,12 @@ remove key assocList =
 keys : AssocList a -> List String
 keys =
     List.map Tuple.first
+
+
+{-| Returns true if key is present in association list
+-}
+member : String -> AssocList a -> Bool
+member key assocList =
+    assocList
+        |> keys
+        |> List.member key

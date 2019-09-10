@@ -1,5 +1,6 @@
 module Json.LD exposing (decoder, expand)
 
+import AssocList as AL
 import Dict exposing (Dict)
 import Json.Decode exposing (Decoder)
 import Json.LD.Context as Context exposing (Context)
@@ -28,7 +29,7 @@ expand context input =
 
 
 expansionAlgorithm : Context -> Maybe String -> JsonValue -> Result Error JsonValue
-expansionAlgorithm context activeProperty_ element_ =
+expansionAlgorithm context activeProperty element_ =
     let
         return =
             S.done
@@ -36,8 +37,8 @@ expansionAlgorithm context activeProperty_ element_ =
         continue =
             S.continue
 
-        isElementScalar state =
-            case state.element of
+        isElementScalar element =
+            case element of
                 StringValue _ ->
                     True
 
@@ -50,25 +51,23 @@ expansionAlgorithm context activeProperty_ element_ =
                 _ ->
                     False
     in
-    { element = element_
-    , activeProperty = activeProperty_
-    }
+    element_
         |> S.pure
         -- 1) If element is null, return null.
         |> S.andThen
-            (\state ->
-                case state.element of
+            (\element ->
+                case element of
                     NullValue ->
                         return NullValue
 
                     _ ->
-                        continue state
+                        continue element
             )
         -- 2) If element is a scalar,
         |> S.ifAndThen
             isElementScalar
-            (\state ->
-                case state.activeProperty of
+            (\element ->
+                case activeProperty of
                     Nothing ->
                         return NullValue
 
@@ -76,24 +75,148 @@ expansionAlgorithm context activeProperty_ element_ =
                         return NullValue
 
                     Just property ->
-                        case valueExpansion context property state.element of
+                        case valueExpansion context property element of
                             Ok expandedValue ->
                                 return expandedValue
 
-                            Err e ->
-                                e |> S.fail
+                            Err error ->
+                                error |> S.fail
             )
         -- 3) If element is an array,
-        |> S.andThen
-            (\state ->
-                case state.element of
+        |> S.maybeAndThen
+            (\element ->
+                case element of
                     ArrayValue items ->
-                        continue state
+                        Just items
 
                     _ ->
-                        continue state
+                        Nothing
             )
-        |> S.andThen (\state -> return state.element)
+            (\items state_ ->
+                List.foldl
+                    -- 3.2) For each item in element:
+                    (\item result ->
+                        -- 3.2.1) Initialize expanded item to the result of using this algorithm recursively, passing active context, active property, and item as element.
+                        let
+                            expandedItemResult =
+                                expansionAlgorithm context activeProperty item
+                        in
+                        case expandedItemResult of
+                            Err error ->
+                                error |> S.fail
+
+                            Ok expandedItem ->
+                                let
+                                    isExpandedItemAnArrayOrAListObject =
+                                        case expandedItem of
+                                            ArrayValue _ ->
+                                                True
+
+                                            ObjectValue values ->
+                                                values
+                                                    |> AL.member "@list"
+
+                                            _ ->
+                                                False
+
+                                    activePropertyIsList =
+                                        activeProperty
+                                            |> Maybe.map ((==) "@list")
+                                            |> Maybe.withDefault False
+
+                                    activePropertyContainerMappingIsSetToList =
+                                        activeProperty
+                                            |> Maybe.andThen (Context.getContainerMapping context)
+                                            |> Maybe.map ((==) "@list")
+                                            |> Maybe.withDefault False
+                                in
+                                -- 3.2.2) If the active property is @list or its container mapping is set to @list, the expanded item must not be an array or a list object, otherwise a list of lists error has been detected and processing is aborted.
+                                if (activePropertyIsList || activePropertyContainerMappingIsSetToList) && isExpandedItemAnArrayOrAListObject then
+                                    ListOfLists |> S.fail
+
+                                else
+                                    -- 3.2.3) If expanded item is an array, append each of its items to result. Otherwise, if expanded item is not null, append it to result.
+                                    case expandedItem of
+                                        ArrayValue listOfExpandedItems ->
+                                            result
+                                                |> S.map (List.append listOfExpandedItems)
+
+                                        NullValue ->
+                                            result
+
+                                        _ ->
+                                            result
+                                                |> S.map ((::) expandedItem)
+                    )
+                    -- 3.1) Initialize an empty array, result.
+                    ([] |> S.pure)
+                    items
+                    |> S.map ArrayValue
+                    -- 3.3) Return result
+                    |> S.andThen return
+            )
+        |> S.andThen
+            (\element ->
+                case element of
+                    -- 4) Otherwise element is a JSON object.
+                    ObjectValue elementValues_ ->
+                        { elementValues = elementValues_
+                        , context = context
+
+                        -- 6) Initialize an empty JSON object, result.
+                        , result = []
+                        }
+                            |> S.pure
+                            -- 5) If element contains the key @context, set active context to the result of the Context Processing algorithm, passing active context and the value of the @context key as local context.
+                            |> S.maybeAndThen
+                                (\{ elementValues } -> AL.get "@context" elementValues)
+                                (\localContext state ->
+                                    case Context.update [] localContext state.context of
+                                        Ok updatedContext ->
+                                            { state | context = updatedContext }
+                                                |> continue
+
+                                        Err ( _, error ) ->
+                                            error |> S.fail
+                                )
+                            -- 7) For each key and value in element, ordered lexicographically by key:
+                            |> S.andThen
+                                (\state ->
+                                    List.foldl
+                                        (\( key, value ) s ->
+                                            if key == "@context" then
+                                                -- 7.1) If key is @context, continue to the next key.
+                                                s
+
+                                            else
+                                                -- 7.2) Set expanded property to the result of using the IRI Expansion algorithm, passing active context, key for value, and true for vocab.
+                                                case Context.expandIRI state.context False True Nothing Nothing key of
+                                                    Ok expandedProperty ->
+                                                        if String.isEmpty expandedProperty || (not (String.contains ":" expandedProperty) && not (List.member expandedProperty Context.keywords)) then
+                                                            -- 7.3) If expanded property is null or it neither contains a colon (:) nor it is a keyword, drop key by continuing to the next key.
+                                                            s
+
+                                                        else if List.member expandedProperty Context.keywords then
+                                                            -- 7.4) If expanded property is a keyword:
+                                                            -- TODO
+                                                            s
+
+                                                        else
+                                                            s
+
+                                                    Err ( _, e ) ->
+                                                        e |> S.fail
+                                        )
+                                        (state |> S.pure)
+                                        state.elementValues
+                                )
+                            |> S.map (\{ result } -> ObjectValue result)
+
+                    _ ->
+                        -- If element is not a JSON object
+                        AlgorithmDidNotReturn |> S.fail
+            )
+        |> S.andThen return
         |> S.toResult (\_ -> Err AlgorithmDidNotReturn)
 
 
