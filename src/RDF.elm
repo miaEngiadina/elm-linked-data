@@ -1,4 +1,4 @@
-module Rdf exposing
+module RDF exposing
     ( BlankNode
     , Graph
     , IRI

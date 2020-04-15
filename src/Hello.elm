@@ -3,10 +3,10 @@ module Hello exposing (Model, Msg(..), init, main, subscriptions, update, view)
 --
 
 import Browser as B
-import Html as H
-import Return exposing (Return)
 import Debug
-import Rdf
+import Html as H
+import RDF
+import Return exposing (Return)
 
 
 main : Program {} Model Msg
@@ -24,15 +24,15 @@ main =
 
 
 type alias Model =
-    Rdf.Triple
+    RDF.Triple
 
 
 init : {} -> Return Msg Model
 init flags =
-    Rdf.triple
-        (Rdf.subjectIRI "http://example.com/test")
-        (Rdf.predicateIRI "http://example.com/color")
-        (Rdf.objectIRI "http://example.com/red")
+    RDF.triple
+        (RDF.subjectIRI "http://example.com/test")
+        (RDF.predicateIRI "http://example.com/color")
+        (RDF.objectIRI "http://example.com/red")
         |> Return.singleton
 
 
