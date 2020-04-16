@@ -9,6 +9,7 @@ module RDF exposing
     , Triple
     , blankNode
     , iri
+    , literal
     , objectBlankNode
     , objectIRI
     , objectLiteral
@@ -30,7 +31,7 @@ type alias IRI =
     String
 
 
-{-| Construct an IRI
+{-| Create an IRI
 -}
 iri : String -> IRI
 iri =
@@ -40,18 +41,30 @@ iri =
 {-| A blank node
 -}
 type BlankNode
-    = BNode
+    = BNode String
 
 
 {-| Create a new blank node.
 -}
-blankNode : () -> BlankNode
-blankNode () =
-    BNode
+blankNode : String -> BlankNode
+blankNode id =
+    BNode id
 
 
+{-| An RDF Literal
+-}
 type alias Literal =
-    ()
+    { value : String
+    , datatype : IRI
+    , language : Maybe String
+    }
+
+
+{-| Create a new literal
+-}
+literal : String -> IRI -> Maybe String -> Literal
+literal value datatype maybeLanguage =
+    Literal value datatype maybeLanguage
 
 
 
@@ -79,9 +92,9 @@ type CObject
 {-| Internal type for nodes. This is a phantom type.
 -}
 type Node a
-    = IRI IRI
-    | BlankNode BlankNode
-    | Literal Literal
+    = NodeIRI IRI
+    | NodeBlankNode BlankNode
+    | NodeLiteral Literal
 
 
 
@@ -98,14 +111,14 @@ type alias Subject =
 -}
 subjectIRI : IRI -> Subject
 subjectIRI i =
-    IRI i
+    NodeIRI i
 
 
 {-| Create a subject from a blank node
 -}
 subjectBlankNode : BlankNode -> Subject
 subjectBlankNode bnode =
-    BlankNode bnode
+    NodeBlankNode bnode
 
 
 
@@ -122,7 +135,7 @@ type alias Predicate =
 -}
 predicateIRI : IRI -> Predicate
 predicateIRI i =
-    IRI i
+    NodeIRI i
 
 
 
@@ -137,17 +150,17 @@ type alias Object =
 
 objectIRI : IRI -> Object
 objectIRI i =
-    IRI i
+    NodeIRI i
 
 
 objectBlankNode : BlankNode -> Object
 objectBlankNode bnode =
-    BlankNode bnode
+    NodeBlankNode bnode
 
 
 objectLiteral : Literal -> Object
 objectLiteral l =
-    Literal l
+    NodeLiteral l
 
 
 

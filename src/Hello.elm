@@ -5,7 +5,10 @@ module Hello exposing (Model, Msg(..), init, main, subscriptions, update, view)
 import Browser as B
 import Debug
 import Html as H
+import Http
+import Json.Decode as JD
 import RDF
+import RDF.JSON
 import Return exposing (Return)
 
 
@@ -24,16 +27,19 @@ main =
 
 
 type alias Model =
-    RDF.Triple
+    String
 
 
 init : {} -> Return Msg Model
 init flags =
-    RDF.triple
-        (RDF.subjectIRI "http://example.com/test")
-        (RDF.predicateIRI "http://example.com/color")
-        (RDF.objectIRI "http://example.com/red")
+    "Loading ... "
         |> Return.singleton
+        |> Return.command
+            (Http.get
+                { url = "https://openengiadina.net/public"
+                , expect = Http.expectJson Receive RDF.JSON.decoder
+                }
+            )
 
 
 
@@ -41,13 +47,21 @@ init flags =
 
 
 type Msg
-    = NoOp
+    = Receive (Result Http.Error RDF.Graph)
 
 
 update : Msg -> Model -> Return Msg Model
 update msg model =
-    model
-        |> Return.singleton
+    case msg of
+        Receive (Ok graph) ->
+            graph
+                |> Debug.toString
+                |> Return.singleton
+
+        Receive (Err err) ->
+            err
+                |> Debug.toString
+                |> Return.singleton
 
 
 
@@ -66,5 +80,5 @@ subscriptions model =
 view : Model -> B.Document Msg
 view model =
     { title = "Hello World"
-    , body = [ model |> Debug.toString |> H.text ]
+    , body = [ model |> H.text ]
     }
