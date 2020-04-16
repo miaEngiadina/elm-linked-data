@@ -37,7 +37,7 @@ valueObjectDecoder =
                                 (JD.field "datatype" JD.string
                                     |> JD.map RDF.iri
                                 )
-                                |> JD.map (Maybe.withDefault "http://www.w3.org/2001/XMLSchema#string")
+                                |> JD.map (Maybe.withDefault (RDF.xsd "string"))
                             )
                             (JD.maybe (JD.field "lang" JD.string))
                             |> JD.map RDF.objectLiteral
