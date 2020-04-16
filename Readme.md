@@ -1,12 +1,19 @@
 # elm-linked-data
 
-Work with Linked Data in Elm.
+Linked Data in Elm.
 
-** WIP: This does not work yet. ***
+Implements basic RDF data types and serializations.
+
+** WIP: not really usable yet. ***
 
 ## Features/TODOs
 
-- [ ] RDF 1.1 
+- [X] RDF 1.1 basics
+- [ ] A better implementation of a Graph
+- [ ] RDF/Turtle decoding
+- [ ] RDF/Turtle encoding
+- [X] RDF/JSON decoding
+- [ ] RDF/JSON encoding
 - [ ] JSON-LD decoding
 - [ ] JSON-LD encoding
 - [ ] Extract/decode data from a RDF graph (as you would decode from a Json)
