@@ -9,6 +9,7 @@ import Html.Attributes as HA
 import Http
 import Json.Decode as JD
 import RDF
+import RDF.Decode
 import RDF.JSON
 import Return exposing (Return)
 
@@ -85,15 +86,15 @@ type alias Note =
     }
 
 
-noteDecoder : RDF.Decoder Note
+noteDecoder : RDF.Decode.Decoder Note
 noteDecoder =
-    RDF.succeed Note
-        |> RDF.ignore (RDF.ensureType <| activityStreams "Note")
-        |> RDF.apply RDF.iriDecoder
-        |> RDF.apply
-            (RDF.objectsDecoder (activityStreams "content" |> RDF.predicateIRI)
-                RDF.literalDecoder
-                |> RDF.first
+    RDF.Decode.succeed Note
+        |> RDF.Decode.ignore (RDF.Decode.ensureType <| activityStreams "Note")
+        |> RDF.Decode.apply RDF.Decode.iriDecoder
+        |> RDF.Decode.apply
+            (RDF.Decode.objectsDecoder (activityStreams "content" |> RDF.predicateIRI)
+                RDF.Decode.literalDecoder
+                |> RDF.Decode.first
             )
 
 
@@ -125,7 +126,7 @@ noteFromDescription description =
 getNotes : RDF.Graph -> List Note
 getNotes graph =
     graph
-        |> RDF.decodeAll noteDecoder
+        |> RDF.Decode.decodeAll noteDecoder
 
 
 graphView : RDF.Graph -> H.Html Msg
@@ -176,6 +177,7 @@ view model =
             Ok graph ->
                 H.main_ []
                     [ notesView graph
+                    , graphView graph
                     ]
 
             Err err ->

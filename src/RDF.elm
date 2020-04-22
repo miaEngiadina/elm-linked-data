@@ -1,46 +1,38 @@
 module RDF exposing
     ( BlankNode
-    , Decoder
     , Description
     , Graph
     , IRI
     , Literal
+    , Node
     , Object
     , Predicate
     , Subject
     , Triple
-    , andThen
-    , apply
+    , asBlankNode
     , asIRI
     , asLiteral
+    , asNode
+    , asObject
+    , asPredicate
+    , asSubject
     , blankNode
-    , decode
-    , decodeAll
     , descriptionGet
-    , ensureType
-    , fail
     , filterForDescriptions
-    , first
-    , ignore
+    , graphFilterMap
+    , graphGetObjects
     , iri
-    , iriDecoder
     , literal
-    , literalDecoder
-    , map
-    , map2
     , namespace
     , objectBlankNode
     , objectIRI
     , objectLiteral
-    , objectsDecoder
     , owl
     , predicateIRI
     , rdf
     , rdfs
-    , sequence
     , subjectBlankNode
     , subjectIRI
-    , succeed
     , triple
     , type_
     , xsd
@@ -118,15 +110,15 @@ type CObject
 
 {-| Internal type for nodes. This is a phantom type.
 -}
-type Node a
+type InternalNode a
     = NodeIRI IRI
     | NodeBlankNode BlankNode
     | NodeLiteral Literal
 
 
-{-| Cast a Subject, Predicate or Object back to an IRI
+{-| Cast node to an IRI
 -}
-asIRI : Node a -> Maybe IRI
+asIRI : InternalNode a -> Maybe IRI
 asIRI node =
     case node of
         NodeIRI iri_ ->
@@ -136,9 +128,9 @@ asIRI node =
             Nothing
 
 
-{-| Cast an Object back to an IRI
+{-| Cast node to a Literal
 -}
-asLiteral : Node a -> Maybe Literal
+asLiteral : InternalNode a -> Maybe Literal
 asLiteral node =
     case node of
         NodeLiteral literal_ ->
@@ -148,6 +140,39 @@ asLiteral node =
             Nothing
 
 
+{-| Cast node to a BlankNode
+-}
+asBlankNode : InternalNode a -> Maybe BlankNode
+asBlankNode node =
+    case node of
+        NodeBlankNode bnode_ ->
+            Just bnode_
+
+        _ ->
+            Nothing
+
+
+{-| Node of the RDF Graph
+-}
+type alias Node =
+    InternalNode Never
+
+
+{-| Cast specialized node to a general node
+-}
+asNode : InternalNode a -> Node
+asNode node =
+    case node of
+        NodeIRI iri_ ->
+            NodeIRI iri_
+
+        NodeBlankNode bnode_ ->
+            NodeBlankNode bnode_
+
+        NodeLiteral literal_ ->
+            NodeLiteral literal_
+
+
 
 -- Subject
 
@@ -155,7 +180,7 @@ asLiteral node =
 {-| Subject which is an IRI or a blank node
 -}
 type alias Subject =
-    Node CSubject
+    InternalNode CSubject
 
 
 {-| Create a subject from an IRI
@@ -172,6 +197,21 @@ subjectBlankNode bnode =
     NodeBlankNode bnode
 
 
+{-| Cast a node to a subject
+-}
+asSubject : InternalNode a -> Maybe Subject
+asSubject node =
+    case node of
+        NodeIRI i ->
+            Just (NodeIRI i)
+
+        NodeBlankNode bnode ->
+            Just (NodeBlankNode bnode)
+
+        NodeLiteral _ ->
+            Nothing
+
+
 
 -- Predicate
 
@@ -179,7 +219,7 @@ subjectBlankNode bnode =
 {-| Predicate which is an IRI
 -}
 type alias Predicate =
-    Node CPredicate
+    InternalNode CPredicate
 
 
 {-| Create a predicate from an IRI
@@ -189,6 +229,18 @@ predicateIRI i =
     NodeIRI i
 
 
+{-| Cast a node to a Predicate
+-}
+asPredicate : InternalNode a -> Maybe Predicate
+asPredicate node =
+    case node of
+        NodeIRI i ->
+            Just (NodeIRI i)
+
+        _ ->
+            Nothing
+
+
 
 -- Object
 
@@ -196,7 +248,7 @@ predicateIRI i =
 {-| Objects which can be a IRI, a blank node or a literal
 -}
 type alias Object =
-    Node CObject
+    InternalNode CObject
 
 
 objectIRI : IRI -> Object
@@ -214,19 +266,19 @@ objectLiteral l =
     NodeLiteral l
 
 
-{-| The price for "no runtime-errors"
+{-| Cast node to object
 -}
-rewrapNode : Node a -> Node b
-rewrapNode node =
+asObject : InternalNode a -> Object
+asObject node =
     case node of
-        NodeIRI iri_ ->
-            NodeIRI iri_
+        NodeIRI i ->
+            NodeIRI i
 
-        NodeBlankNode bnode_ ->
-            NodeBlankNode bnode_
+        NodeBlankNode b ->
+            NodeBlankNode b
 
-        NodeLiteral literal_ ->
-            NodeLiteral literal_
+        NodeLiteral l ->
+            NodeLiteral l
 
 
 
@@ -237,9 +289,9 @@ rewrapNode node =
 nodes (subject and object) that are connected by an edge labeled with predicate.
 -}
 type alias Triple =
-    { subject : Node CSubject
-    , predicate : Node CPredicate
-    , object : Node CObject
+    { subject : Subject
+    , predicate : Predicate
+    , object : Object
     }
 
 
@@ -365,223 +417,3 @@ descriptionGet p description =
                 else
                     Nothing
             )
-
-
-
--- RDF Decoder
--- This needs to be part of this module in order to be able to access internal representation of the graph.
-
-
-type alias State =
-    { graph : Graph
-    , node : Node Never
-    }
-
-
-type alias Error =
-    String
-
-
-{-| A RDF decoder.
--}
-type Decoder a
-    = Decoder (State -> Result Error ( State, a ))
-
-
-{-| Run the decoder.
--}
-decode : Decoder a -> Graph -> Subject -> Result Error a
-decode (Decoder f) graph node =
-    f (State graph (rewrapNode node))
-        |> Result.map Tuple.second
-
-
-{-| Run decoder on all subjects in Graph and return all matches.
--}
-decodeAll : Decoder a -> Graph -> List a
-decodeAll decoder graph =
-    graph
-        |> graphFilterMap
-            (\triple_ ->
-                decode decoder graph triple_.subject
-                    |> Result.toMaybe
-            )
-
-
-
--- Primitives
-
-
-{-| Decoder that succeeds without doing anything.
--}
-succeed : a -> Decoder a
-succeed a =
-    Decoder (\state -> Ok ( state, a ))
-
-
-{-| Decoder that always fails.
--}
-fail : String -> Decoder a
-fail msg =
-    Decoder (\state -> Err msg)
-
-
-{-| Run a decoder and then run another decoder.
--}
-andThen : (a -> Decoder b) -> Decoder a -> Decoder b
-andThen f (Decoder decoderA) =
-    Decoder
-        (\state1 ->
-            decoderA state1
-                |> Result.andThen
-                    (\( state2, a ) ->
-                        let
-                            (Decoder decoderB) =
-                                f a
-                        in
-                        decoderB state2
-                    )
-        )
-
-
-{-| Transform result of a decoder
--}
-map : (a -> b) -> Decoder a -> Decoder b
-map f =
-    andThen (f >> succeed)
-
-
-{-| Combine the result from two decoders.
--}
-map2 : (a -> b -> c) -> Decoder a -> Decoder b -> Decoder c
-map2 f decoderA decoderB =
-    decoderA
-        |> andThen
-            (\a ->
-                decoderB
-                    |> map (f a)
-            )
-
-
-{-| Apply the result of a decoder to a decoder.
--}
-apply : Decoder a -> Decoder (a -> b) -> Decoder b
-apply decoderA decoderF =
-    map2 (\f a -> f a) decoderF decoderA
-
-
-{-| Run a decoder and ignore thre result.
--}
-ignore : Decoder b -> Decoder a -> Decoder a
-ignore decoderB decoderA =
-    map2 (\a b -> a) decoderA decoderB
-
-
-{-| Sequence a list of decoders.
--}
-sequence : List (Decoder a) -> Decoder (List a)
-sequence decoders =
-    case decoders of
-        [] ->
-            succeed []
-
-        headDecoder :: tailDecoders ->
-            headDecoder
-                |> andThen
-                    (\headValue ->
-                        sequence tailDecoders
-                            |> map (\tailValues -> headValue :: tailValues)
-                    )
-
-
-{-| Get the first successfully decoded value.
--}
-first : Decoder (List a) -> Decoder a
-first decoder =
-    decoder
-        |> andThen
-            (\lst ->
-                case lst of
-                    [] ->
-                        fail "Can not get first element from empty list."
-
-                    fst :: _ ->
-                        succeed fst
-            )
-
-
-
--- Decode RDF components
-
-
-{-| Decode and IRI
--}
-iriDecoder : Decoder IRI
-iriDecoder =
-    Decoder
-        (\state ->
-            case state.node of
-                NodeIRI iri_ ->
-                    Ok ( state, iri_ )
-
-                NodeBlankNode _ ->
-                    Err "expecting iri, got BlankNode"
-
-                NodeLiteral _ ->
-                    Err "expecting IRI, got Literal"
-        )
-
-
-{-| Decode a Literal
--}
-literalDecoder : Decoder Literal
-literalDecoder =
-    Decoder
-        (\state ->
-            case state.node of
-                NodeIRI _ ->
-                    Err "expecting Literal, got IRI"
-
-                NodeBlankNode _ ->
-                    Err "expecting Literal, got BlankNode"
-
-                NodeLiteral literal_ ->
-                    Ok ( state, literal_ )
-        )
-
-
-{-| Decode objects that are linked to current subject via predicate.
--}
-objectsDecoder : Predicate -> Decoder a -> Decoder (List a)
-objectsDecoder p (Decoder od) =
-    Decoder
-        (\state ->
-            let
-                decodeObjects object =
-                    od { state | node = rewrapNode object }
-            in
-            case state.node of
-                NodeIRI iri_ ->
-                    graphGetObjects state.graph (subjectIRI iri_) p
-                        |> List.map decodeObjects
-                        |> List.filterMap Result.toMaybe
-                        |> List.map Tuple.second
-                        |> Tuple.pair state
-                        |> Ok
-
-                NodeBlankNode bnode_ ->
-                    graphGetObjects state.graph (subjectBlankNode bnode_) p
-                        |> List.map decodeObjects
-                        |> List.filterMap Result.toMaybe
-                        |> List.map Tuple.second
-                        |> Tuple.pair state
-                        |> Ok
-
-                NodeLiteral _ ->
-                    Err "expecting IRI or BlankNode, got Literal"
-        )
-
-
-ensureType : IRI -> Decoder IRI
-ensureType iri_ =
-    succeed iri_
