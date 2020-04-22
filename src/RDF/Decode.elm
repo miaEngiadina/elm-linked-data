@@ -57,9 +57,10 @@ decode (Decoder f) graph node =
 decodeAll : Decoder a -> RDF.Graph -> List a
 decodeAll decoder graph =
     graph
-        |> RDF.graphFilterMap
-            (\triple_ ->
-                decode decoder graph triple_.subject
+        |> RDF.subjects
+        |> List.filterMap
+            (\subject ->
+                decode decoder graph subject
                     |> Result.toMaybe
             )
 

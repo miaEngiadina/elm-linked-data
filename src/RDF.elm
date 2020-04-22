@@ -1,6 +1,5 @@
 module RDF exposing
     ( BlankNode
-    , Description
     , Graph
     , IRI
     , Literal
@@ -17,9 +16,7 @@ module RDF exposing
     , asPredicate
     , asSubject
     , blankNode
-    , descriptionGet
-    , filterForDescriptions
-    , graphFilterMap
+    , fromList
     , graphGetObjects
     , iri
     , literal
@@ -33,6 +30,8 @@ module RDF exposing
     , rdfs
     , subjectBlankNode
     , subjectIRI
+    , subjects
+    , toList
     , triple
     , type_
     , xsd
@@ -40,6 +39,10 @@ module RDF exposing
 
 {-| Resource Description Framework (RDF). See <https://www.w3.org/TR/rdf11-concepts/>
 -}
+
+import List.Extra
+
+
 
 -- RDF Terms
 
@@ -359,60 +362,53 @@ xsd =
 TODO Currently this is implemented as a list of triples. This is not very efficient and there are bette ways of doing this by creating indices for efficient lookup and querying.
 
 -}
-type alias Graph =
-    List Triple
+type Graph
+    = Graph (List Triple)
 
 
-{-| Description is a graph with a pointer to a subject. This is useful when dealing with certain things in the graph, by providing a starting point for queries.
+{-| Create a new graph from a list of triples
 -}
-type alias Description =
-    { subject : Subject
-    , graph : Graph
-    }
+fromList : List Triple -> Graph
+fromList ts =
+    Graph ts
 
 
-graphFilterMap : (Triple -> Maybe a) -> Graph -> List a
-graphFilterMap filter graph =
+{-| Return list of triples contained in a graph.
+-}
+toList : Graph -> List Triple
+toList (Graph graph) =
     graph
-        |> List.filterMap filter
+
+
+{-| Return a list of all subjects in graph.
+-}
+subjects : Graph -> List Subject
+subjects graph =
+    graph
+        |> toList
+        |> List.map .subject
+        |> List.Extra.uniqueBy
+            (\s ->
+                case s of
+                    NodeIRI i ->
+                        i
+
+                    NodeBlankNode (BNode b) ->
+                        b
+
+                    _ ->
+                        "-"
+            )
 
 
 graphGetObjects : Graph -> Subject -> Predicate -> List Object
 graphGetObjects graph subject predicate =
-    graphFilterMap
-        (\triple_ ->
-            if subject == triple_.subject && predicate == triple_.predicate then
-                Just triple_.object
-
-            else
-                Nothing
-        )
-        graph
-
-
-filterForDescriptions : (Triple -> Bool) -> Graph -> List Description
-filterForDescriptions filter graph =
     graph
+        |> toList
         |> List.filterMap
             (\triple_ ->
-                if filter triple_ then
-                    { subject = .subject triple_
-                    , graph = graph
-                    }
-                        |> Just
-
-                else
-                    Nothing
-            )
-
-
-descriptionGet : Predicate -> Description -> List Object
-descriptionGet p description =
-    .graph description
-        |> List.filterMap
-            (\{ subject, predicate, object } ->
-                if subject == .subject description && p == predicate then
-                    Just object
+                if subject == triple_.subject && predicate == triple_.predicate then
+                    Just triple_.object
 
                 else
                     Nothing

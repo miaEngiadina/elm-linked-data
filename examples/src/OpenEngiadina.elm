@@ -98,31 +98,6 @@ noteDecoder =
             )
 
 
-noteFromDescription : RDF.Description -> Maybe Note
-noteFromDescription description =
-    Maybe.map2 Note
-        -- (RDF.descriptionGet
-        --     (activityStreams "to" |> RDF.predicateIRI)
-        --     description
-        --     |> Debug.log "afterdescriptionGet to"
-        --     |> List.filterMap RDF.asIRI
-        --     |> Just
-        -- )
-        -- (RDF.descriptionGet
-        --     (activityStreams "attributedTo" |> RDF.predicateIRI)
-        --     description
-        --     |> List.filterMap RDF.asIRI
-        --     |> List.head
-        -- )
-        (.subject description |> RDF.asIRI)
-        (RDF.descriptionGet
-            (activityStreams "content" |> RDF.predicateIRI)
-            description
-            |> List.filterMap RDF.asLiteral
-            |> List.head
-        )
-
-
 getNotes : RDF.Graph -> List Note
 getNotes graph =
     graph
@@ -140,7 +115,7 @@ graphView graph =
                     , object |> Debug.toString |> H.text |> List.singleton |> H.td []
                     ]
             )
-            graph
+            (graph |> RDF.toList)
         )
 
 
@@ -177,7 +152,8 @@ view model =
             Ok graph ->
                 H.main_ []
                     [ notesView graph
-                    , graphView graph
+
+                    -- , graphView graph
                     ]
 
             Err err ->

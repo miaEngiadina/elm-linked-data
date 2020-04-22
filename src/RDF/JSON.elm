@@ -118,3 +118,4 @@ decoder =
                         subjectObject
                 )
             )
+        |> JD.map RDF.fromList
