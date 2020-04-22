@@ -74,15 +74,27 @@ subscriptions model =
 -- VIEW
 
 
+activityStreams : String -> RDF.IRI
+activityStreams =
+    RDF.namespace "https://www.w3.org/ns/activitystreams#"
+
+
 type alias Note =
     { iri : RDF.IRI
     , content : RDF.Literal
     }
 
 
-activityStreams : String -> RDF.IRI
-activityStreams =
-    RDF.namespace "https://www.w3.org/ns/activitystreams#"
+noteDecoder : RDF.Decoder Note
+noteDecoder =
+    RDF.succeed Note
+        |> RDF.ignore (RDF.ensureType <| activityStreams "Note")
+        |> RDF.apply RDF.iriDecoder
+        |> RDF.apply
+            (RDF.objectsDecoder (activityStreams "content" |> RDF.predicateIRI)
+                RDF.literalDecoder
+                |> RDF.first
+            )
 
 
 noteFromDescription : RDF.Description -> Maybe Note
@@ -113,16 +125,7 @@ noteFromDescription description =
 getNotes : RDF.Graph -> List Note
 getNotes graph =
     graph
-        |> RDF.filterForDescriptions
-            (\{ subject, predicate, object } ->
-                (predicate == RDF.type_)
-                    && object
-                    == ("Note"
-                            |> activityStreams
-                            |> RDF.objectIRI
-                       )
-            )
-        |> List.filterMap noteFromDescription
+        |> RDF.decodeAll noteDecoder
 
 
 graphView : RDF.Graph -> H.Html Msg

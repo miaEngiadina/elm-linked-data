@@ -1,5 +1,6 @@
 module RDF exposing
     ( BlankNode
+    , Decoder
     , Description
     , Graph
     , IRI
@@ -8,23 +9,38 @@ module RDF exposing
     , Predicate
     , Subject
     , Triple
+    , andThen
+    , apply
     , asIRI
     , asLiteral
     , blankNode
+    , decode
+    , decodeAll
     , descriptionGet
+    , ensureType
+    , fail
     , filterForDescriptions
+    , first
+    , ignore
     , iri
+    , iriDecoder
     , literal
+    , literalDecoder
+    , map
+    , map2
     , namespace
     , objectBlankNode
     , objectIRI
     , objectLiteral
+    , objectsDecoder
     , owl
     , predicateIRI
     , rdf
     , rdfs
+    , sequence
     , subjectBlankNode
     , subjectIRI
+    , succeed
     , triple
     , type_
     , xsd
@@ -198,6 +214,21 @@ objectLiteral l =
     NodeLiteral l
 
 
+{-| The price for "no runtime-errors"
+-}
+rewrapNode : Node a -> Node b
+rewrapNode node =
+    case node of
+        NodeIRI iri_ ->
+            NodeIRI iri_
+
+        NodeBlankNode bnode_ ->
+            NodeBlankNode bnode_
+
+        NodeLiteral literal_ ->
+            NodeLiteral literal_
+
+
 
 -- Triple
 
@@ -288,6 +319,25 @@ type alias Description =
     }
 
 
+graphFilterMap : (Triple -> Maybe a) -> Graph -> List a
+graphFilterMap filter graph =
+    graph
+        |> List.filterMap filter
+
+
+graphGetObjects : Graph -> Subject -> Predicate -> List Object
+graphGetObjects graph subject predicate =
+    graphFilterMap
+        (\triple_ ->
+            if subject == triple_.subject && predicate == triple_.predicate then
+                Just triple_.object
+
+            else
+                Nothing
+        )
+        graph
+
+
 filterForDescriptions : (Triple -> Bool) -> Graph -> List Description
 filterForDescriptions filter graph =
     graph
@@ -315,3 +365,223 @@ descriptionGet p description =
                 else
                     Nothing
             )
+
+
+
+-- RDF Decoder
+-- This needs to be part of this module in order to be able to access internal representation of the graph.
+
+
+type alias State =
+    { graph : Graph
+    , node : Node Never
+    }
+
+
+type alias Error =
+    String
+
+
+{-| A RDF decoder.
+-}
+type Decoder a
+    = Decoder (State -> Result Error ( State, a ))
+
+
+{-| Run the decoder.
+-}
+decode : Decoder a -> Graph -> Subject -> Result Error a
+decode (Decoder f) graph node =
+    f (State graph (rewrapNode node))
+        |> Result.map Tuple.second
+
+
+{-| Run decoder on all subjects in Graph and return all matches.
+-}
+decodeAll : Decoder a -> Graph -> List a
+decodeAll decoder graph =
+    graph
+        |> graphFilterMap
+            (\triple_ ->
+                decode decoder graph triple_.subject
+                    |> Result.toMaybe
+            )
+
+
+
+-- Primitives
+
+
+{-| Decoder that succeeds without doing anything.
+-}
+succeed : a -> Decoder a
+succeed a =
+    Decoder (\state -> Ok ( state, a ))
+
+
+{-| Decoder that always fails.
+-}
+fail : String -> Decoder a
+fail msg =
+    Decoder (\state -> Err msg)
+
+
+{-| Run a decoder and then run another decoder.
+-}
+andThen : (a -> Decoder b) -> Decoder a -> Decoder b
+andThen f (Decoder decoderA) =
+    Decoder
+        (\state1 ->
+            decoderA state1
+                |> Result.andThen
+                    (\( state2, a ) ->
+                        let
+                            (Decoder decoderB) =
+                                f a
+                        in
+                        decoderB state2
+                    )
+        )
+
+
+{-| Transform result of a decoder
+-}
+map : (a -> b) -> Decoder a -> Decoder b
+map f =
+    andThen (f >> succeed)
+
+
+{-| Combine the result from two decoders.
+-}
+map2 : (a -> b -> c) -> Decoder a -> Decoder b -> Decoder c
+map2 f decoderA decoderB =
+    decoderA
+        |> andThen
+            (\a ->
+                decoderB
+                    |> map (f a)
+            )
+
+
+{-| Apply the result of a decoder to a decoder.
+-}
+apply : Decoder a -> Decoder (a -> b) -> Decoder b
+apply decoderA decoderF =
+    map2 (\f a -> f a) decoderF decoderA
+
+
+{-| Run a decoder and ignore thre result.
+-}
+ignore : Decoder b -> Decoder a -> Decoder a
+ignore decoderB decoderA =
+    map2 (\a b -> a) decoderA decoderB
+
+
+{-| Sequence a list of decoders.
+-}
+sequence : List (Decoder a) -> Decoder (List a)
+sequence decoders =
+    case decoders of
+        [] ->
+            succeed []
+
+        headDecoder :: tailDecoders ->
+            headDecoder
+                |> andThen
+                    (\headValue ->
+                        sequence tailDecoders
+                            |> map (\tailValues -> headValue :: tailValues)
+                    )
+
+
+{-| Get the first successfully decoded value.
+-}
+first : Decoder (List a) -> Decoder a
+first decoder =
+    decoder
+        |> andThen
+            (\lst ->
+                case lst of
+                    [] ->
+                        fail "Can not get first element from empty list."
+
+                    fst :: _ ->
+                        succeed fst
+            )
+
+
+
+-- Decode RDF components
+
+
+{-| Decode and IRI
+-}
+iriDecoder : Decoder IRI
+iriDecoder =
+    Decoder
+        (\state ->
+            case state.node of
+                NodeIRI iri_ ->
+                    Ok ( state, iri_ )
+
+                NodeBlankNode _ ->
+                    Err "expecting iri, got BlankNode"
+
+                NodeLiteral _ ->
+                    Err "expecting IRI, got Literal"
+        )
+
+
+{-| Decode a Literal
+-}
+literalDecoder : Decoder Literal
+literalDecoder =
+    Decoder
+        (\state ->
+            case state.node of
+                NodeIRI _ ->
+                    Err "expecting Literal, got IRI"
+
+                NodeBlankNode _ ->
+                    Err "expecting Literal, got BlankNode"
+
+                NodeLiteral literal_ ->
+                    Ok ( state, literal_ )
+        )
+
+
+{-| Decode objects that are linked to current subject via predicate.
+-}
+objectsDecoder : Predicate -> Decoder a -> Decoder (List a)
+objectsDecoder p (Decoder od) =
+    Decoder
+        (\state ->
+            let
+                decodeObjects object =
+                    od { state | node = rewrapNode object }
+            in
+            case state.node of
+                NodeIRI iri_ ->
+                    graphGetObjects state.graph (subjectIRI iri_) p
+                        |> List.map decodeObjects
+                        |> List.filterMap Result.toMaybe
+                        |> List.map Tuple.second
+                        |> Tuple.pair state
+                        |> Ok
+
+                NodeBlankNode bnode_ ->
+                    graphGetObjects state.graph (subjectBlankNode bnode_) p
+                        |> List.map decodeObjects
+                        |> List.filterMap Result.toMaybe
+                        |> List.map Tuple.second
+                        |> Tuple.pair state
+                        |> Ok
+
+                NodeLiteral _ ->
+                    Err "expecting IRI or BlankNode, got Literal"
+        )
+
+
+ensureType : IRI -> Decoder IRI
+ensureType iri_ =
+    succeed iri_
