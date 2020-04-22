@@ -16,5 +16,5 @@ Implements basic RDF data types and serializations.
 - [ ] RDF/JSON encoding
 - [ ] JSON-LD decoding
 - [ ] JSON-LD encoding
-- [ ] Extract/decode data from a RDF graph (as you would decode from a Json)
+- [x] Extract/decode data from a RDF graph (as you would decode from a Json)
 
