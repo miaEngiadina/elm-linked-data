@@ -8,6 +8,8 @@ module RDF exposing
     , Predicate
     , Subject
     , Triple
+    , addTriple
+    , addTriples
     , asBlankNode
     , asIRI
     , asLiteral
@@ -16,10 +18,15 @@ module RDF exposing
     , asPredicate
     , asSubject
     , blankNode
+    , blankNodeId
+    , empty
     , fromList
     , graphGetObjects
     , iri
     , literal
+    , mapObject
+    , mapPredicate
+    , mapSubject
     , namespace
     , objectBlankNode
     , objectIRI
@@ -30,6 +37,7 @@ module RDF exposing
     , rdfs
     , subjectBlankNode
     , subjectIRI
+    , subjectPredicates
     , subjects
     , toList
     , triple
@@ -71,6 +79,13 @@ type BlankNode
 blankNode : String -> BlankNode
 blankNode id =
     BNode id
+
+
+{-| Get id of blank node.
+-}
+blankNodeId : BlankNode -> String
+blankNodeId (BNode id) =
+    id
 
 
 {-| An RDF Literal
@@ -176,6 +191,19 @@ asNode node =
             NodeLiteral literal_
 
 
+mapNode : InternalNode b -> (IRI -> a) -> (BlankNode -> a) -> (Literal -> a) -> a
+mapNode node fIRI fBlankNode fLiteral =
+    case node of
+        NodeIRI iri_ ->
+            fIRI iri_
+
+        NodeBlankNode bnode_ ->
+            fBlankNode bnode_
+
+        NodeLiteral literal_ ->
+            fLiteral literal_
+
+
 
 -- Subject
 
@@ -215,6 +243,14 @@ asSubject node =
             Nothing
 
 
+mapSubject : Subject -> (IRI -> a) -> (BlankNode -> a) -> a
+mapSubject s fIRI fBlankNode =
+    mapNode s
+        fIRI
+        fBlankNode
+        (\_ -> Debug.todo "Subject can not be a literal")
+
+
 
 -- Predicate
 
@@ -244,6 +280,14 @@ asPredicate node =
             Nothing
 
 
+mapPredicate : Predicate -> (IRI -> a) -> a
+mapPredicate p fIRI =
+    mapNode p
+        fIRI
+        (\_ -> Debug.todo "Predicate can not be Blank Node")
+        (\_ -> Debug.todo "Predicate can not be Literal")
+
+
 
 -- Object
 
@@ -267,6 +311,11 @@ objectBlankNode bnode =
 objectLiteral : Literal -> Object
 objectLiteral l =
     NodeLiteral l
+
+
+mapObject : Object -> (IRI -> a) -> (BlankNode -> a) -> (Literal -> a) -> a
+mapObject =
+    mapNode
 
 
 {-| Cast node to object
@@ -373,11 +422,36 @@ fromList ts =
     Graph ts
 
 
+{-| An empty graph
+-}
+empty : Graph
+empty =
+    fromList []
+
+
 {-| Return list of triples contained in a graph.
 -}
 toList : Graph -> List Triple
 toList (Graph graph) =
     graph
+
+
+{-| Add triple to graph
+-}
+addTriple : Triple -> Graph -> Graph
+addTriple triple_ (Graph graph) =
+    triple_
+        :: graph
+        |> Graph
+
+
+{-| Add triples to graph
+-}
+addTriples : List Triple -> Graph -> Graph
+addTriples triples (Graph graph) =
+    graph
+        ++ triples
+        |> Graph
 
 
 {-| Return a list of all subjects in graph.
@@ -399,6 +473,22 @@ subjects graph =
                     _ ->
                         "-"
             )
+
+
+subjectPredicates : Graph -> Subject -> List Predicate
+subjectPredicates graph s =
+    graph
+        |> toList
+        |> List.filterMap
+            (\t_ ->
+                if s == t_.subject then
+                    Just t_.predicate
+
+                else
+                    Nothing
+            )
+        |> List.Extra.uniqueBy
+            (\p -> mapPredicate p identity)
 
 
 graphGetObjects : Graph -> Subject -> Predicate -> List Object

@@ -6,8 +6,10 @@ import Browser as B
 import Debug
 import Html as H
 import Html.Attributes as HA
+import Html.Events as HE
 import Http
 import Json.Decode as JD
+import Json.Encode as JE
 import RDF
 import RDF.Decode
 import RDF.JSON
@@ -29,13 +31,16 @@ main =
 
 
 type alias Model =
-    Result String RDF.Graph
+    { graph : RDF.Graph
+    , content : String
+    }
 
 
 init : {} -> Return Msg Model
 init flags =
-    "Loading ... "
-        |> Result.Err
+    { graph = RDF.fromList []
+    , content = ""
+    }
         |> Return.singleton
         |> Return.command
             (Http.get
@@ -51,14 +56,23 @@ init flags =
 
 type Msg
     = Receive (Result Http.Error RDF.Graph)
+    | UpdateContent String
 
 
 update : Msg -> Model -> Return Msg Model
 update msg model =
     case msg of
-        Receive result ->
-            result
-                |> Result.mapError Debug.toString
+        Receive (Ok graph) ->
+            graph
+                |> (\graph_ -> { model | graph = graph_ })
+                |> Return.singleton
+
+        Receive (Err e) ->
+            model
+                |> Return.singleton
+
+        UpdateContent s ->
+            { model | content = s }
                 |> Return.singleton
 
 
@@ -72,7 +86,7 @@ subscriptions model =
 
 
 
--- VIEW
+-- ActivityStreams Notes
 
 
 activityStreams : String -> RDF.IRI
@@ -104,19 +118,8 @@ getNotes graph =
         |> RDF.Decode.decodeAll noteDecoder
 
 
-graphView : RDF.Graph -> H.Html Msg
-graphView graph =
-    H.table []
-        (List.map
-            (\{ subject, predicate, object } ->
-                H.tr []
-                    [ subject |> Debug.toString |> H.text |> List.singleton |> H.td []
-                    , predicate |> Debug.toString |> H.text |> List.singleton |> H.td []
-                    , object |> Debug.toString |> H.text |> List.singleton |> H.td []
-                    ]
-            )
-            (graph |> RDF.toList)
-        )
+
+-- VIEW
 
 
 noteView : Note -> H.Html Msg
@@ -140,6 +143,53 @@ notesView graph =
     H.div [] (notes |> List.map noteView)
 
 
+encodeNote : String -> String
+encodeNote content =
+    let
+        id =
+            "_"
+                |> RDF.iri
+                |> RDF.subjectIRI
+    in
+    RDF.empty
+        |> RDF.addTriple
+            (RDF.Triple id
+                RDF.type_
+                (activityStreams "Note" |> RDF.objectIRI)
+            )
+        |> RDF.addTriple
+            (RDF.Triple id
+                (activityStreams "content" |> RDF.predicateIRI)
+                (RDF.literal content (RDF.xsd "string") Nothing
+                    |> RDF.objectLiteral
+                )
+            )
+        |> RDF.JSON.encode
+        |> JE.encode 2
+
+
+composeNote : String -> H.Html Msg
+composeNote content =
+    H.div []
+        [ H.input
+            [ HA.value content
+            , HE.onInput UpdateContent
+            ]
+            []
+        , H.button [] [ H.text "Post" ]
+        , H.p []
+            [ "The encoded note (in RDF/JSON) looks like this:"
+                |> H.text
+            ]
+        , H.code []
+            [ H.pre []
+                [ encodeNote content
+                    |> H.text
+                ]
+            ]
+        ]
+
+
 view : Model -> B.Document Msg
 view model =
     { title = "Notes from openEngiadina"
@@ -148,15 +198,12 @@ view model =
             [ H.h1 [] [ H.text "Notes from openEngiadina" ]
             , H.p [] [ H.text "This is a small example app that fetches public ActivityPub Notes from an ActivityPub server at https://openengiadina.net/" ]
             ]
-        , case model of
-            Ok graph ->
-                H.main_ []
-                    [ notesView graph
-
-                    -- , graphView graph
-                    ]
-
-            Err err ->
-                err |> Debug.toString |> H.text
+        , H.main_
+            []
+            [ H.h2 [] [ H.text "Compose" ]
+            , composeNote model.content
+            , H.h2 [] [ H.text "Notes" ]
+            , notesView model.graph
+            ]
         ]
     }

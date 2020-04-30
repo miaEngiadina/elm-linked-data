@@ -1,4 +1,4 @@
-module RDF.JSON exposing (decoder)
+module RDF.JSON exposing (decoder, encode)
 
 {-| Decoder and encoder for the RDF 1.1 JSON Alternate Serialization (RDF/JSON).
 
@@ -9,6 +9,7 @@ See <https://www.w3.org/TR/rdf-json/>.
 -}
 
 import Json.Decode as JD
+import Json.Encode as JE
 import RDF
 
 
@@ -119,3 +120,73 @@ decoder =
                 )
             )
         |> JD.map RDF.fromList
+
+
+
+-- Encoder
+
+
+encodeObject : RDF.Object -> JE.Value
+encodeObject object =
+    RDF.mapObject object
+        (\iri ->
+            [ ( "type", "uri" |> JE.string )
+            , ( "value", JE.string iri )
+            ]
+                |> JE.object
+        )
+        (\bnode ->
+            [ ( "type", "bnode" |> JE.string )
+            , ( "value"
+              , "_:"
+                    ++ RDF.blankNodeId bnode
+                    |> JE.string
+              )
+            ]
+                |> JE.object
+        )
+        (\literal ->
+            [ Just ( "type", "literal" |> JE.string )
+            , Just ( "value", literal.value |> JE.string )
+            , Just ( "datatype", literal.datatype |> JE.string )
+            , literal.language
+                |> Maybe.map (\l -> ( "lang", l |> JE.string ))
+            ]
+                |> List.filterMap identity
+                |> JE.object
+        )
+
+
+encodePredicate : RDF.Predicate -> String
+encodePredicate p =
+    RDF.mapPredicate p identity
+
+
+encodeSubject : RDF.Subject -> String
+encodeSubject s =
+    RDF.mapSubject s
+        (\iri -> iri)
+        RDF.blankNodeId
+
+
+encode : RDF.Graph -> JE.Value
+encode graph =
+    graph
+        |> RDF.subjects
+        |> JE.list
+            (\s ->
+                [ ( encodeSubject s
+                  , RDF.subjectPredicates graph s
+                        |> JE.list
+                            (\p ->
+                                [ ( encodePredicate p
+                                  , RDF.graphGetObjects graph s p
+                                        |> JE.list encodeObject
+                                  )
+                                ]
+                                    |> JE.object
+                            )
+                  )
+                ]
+                    |> JE.object
+            )
