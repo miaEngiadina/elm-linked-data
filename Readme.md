@@ -13,7 +13,7 @@ Implements basic RDF data types and serializations.
 - [ ] RDF/Turtle decoding
 - [ ] RDF/Turtle encoding
 - [X] RDF/JSON decoding
-- [ ] RDF/JSON encoding
+- [x] RDF/JSON encoding
 - [ ] JSON-LD decoding
 - [ ] JSON-LD encoding
 - [x] Extract/decode data from a RDF graph (as you would decode from a Json)
