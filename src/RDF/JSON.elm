@@ -173,20 +173,15 @@ encode : RDF.Graph -> JE.Value
 encode graph =
     graph
         |> RDF.subjects
-        |> JE.list
+        |> List.map
             (\s ->
-                [ ( encodeSubject s
-                  , RDF.subjectPredicates graph s
-                        |> JE.list
-                            (\p ->
-                                [ ( encodePredicate p
-                                  , RDF.graphGetObjects graph s p
-                                        |> JE.list encodeObject
-                                  )
-                                ]
-                                    |> JE.object
-                            )
-                  )
-                ]
+                ( encodeSubject s
+                , RDF.subjectPredicates graph s
+                    |> List.map
+                        (\p ->
+                            ( encodePredicate p, RDF.graphGetObjects graph s p |> JE.list encodeObject )
+                        )
                     |> JE.object
+                )
             )
+        |> JE.object
