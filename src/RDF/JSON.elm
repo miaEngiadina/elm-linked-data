@@ -166,7 +166,9 @@ encodeSubject : RDF.Subject -> String
 encodeSubject s =
     RDF.mapSubject s
         (\iri -> iri)
-        RDF.blankNodeId
+        (\bnode ->
+            "_:" ++ RDF.blankNodeId bnode
+        )
 
 
 encode : RDF.Graph -> JE.Value
