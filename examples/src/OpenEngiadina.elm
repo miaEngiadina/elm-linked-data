@@ -16,6 +16,19 @@ import RDF.JSON
 import Return exposing (Return)
 
 
+
+-- Config
+
+
+publicUrl : String
+publicUrl =
+    "http://localhost:4000/public"
+
+
+
+-- "https://openengiadina.net/public"
+
+
 main : Program {} Model Msg
 main =
     B.document
@@ -42,12 +55,15 @@ init flags =
     , content = ""
     }
         |> Return.singleton
-        |> Return.command
-            (Http.get
-                { url = "https://openengiadina.net/public"
-                , expect = Http.expectJson Receive RDF.JSON.decoder
-                }
-            )
+        |> Return.command getNotes
+
+
+getNotes : Cmd Msg
+getNotes =
+    Http.get
+        { url = publicUrl
+        , expect = Http.expectJson Receive RDF.JSON.decoder
+        }
 
 
 
@@ -57,6 +73,8 @@ init flags =
 type Msg
     = Receive (Result Http.Error RDF.Graph)
     | UpdateContent String
+    | Post
+    | Refresh
 
 
 update : Msg -> Model -> Return Msg Model
@@ -74,6 +92,16 @@ update msg model =
         UpdateContent s ->
             { model | content = s }
                 |> Return.singleton
+
+        Post ->
+            model
+                |> Return.singleton
+                |> Return.command (postNote model.content)
+
+        Refresh ->
+            model
+                |> Return.singleton
+                |> Return.command getNotes
 
 
 
@@ -112,8 +140,8 @@ noteDecoder =
             )
 
 
-getNotes : RDF.Graph -> List Note
-getNotes graph =
+getNotesFromGraph : RDF.Graph -> List Note
+getNotesFromGraph graph =
     graph
         |> RDF.Decode.decodeAll noteDecoder
 
@@ -138,22 +166,35 @@ notesView : RDF.Graph -> H.Html Msg
 notesView graph =
     let
         notes =
-            getNotes graph
+            getNotesFromGraph graph
     in
     H.div [] (notes |> List.map noteView)
+
+
+postNote : String -> Cmd Msg
+postNote content =
+    Http.request
+        { method = "POST"
+        , headers = [ Http.header "Authorization" "Basic YWxpY2U6MTIz" ]
+        , url = "http://localhost:4000/users/alice/outbox"
+        , body = Http.stringBody "application/rdf+json" (encodeNote content)
+        , expect = Http.expectWhatever (always Refresh)
+        , timeout = Nothing
+        , tracker = Nothing
+        }
 
 
 encodeNote : String -> String
 encodeNote content =
     let
         object_id =
-            "#object"
-                |> RDF.iri
+            "object"
+                |> RDF.blankNode
 
         activity_id =
-            ""
-                |> RDF.iri
-                |> RDF.subjectIRI
+            "activity"
+                |> RDF.blankNode
+                |> RDF.subjectBlankNode
     in
     RDF.empty
         -- activity
@@ -164,15 +205,15 @@ encodeNote content =
         |> RDF.addTriple
             (RDF.Triple activity_id (activityStreams "to" |> RDF.predicateIRI) (activityStreams "Public" |> RDF.objectIRI))
         |> RDF.addTriple
-            (RDF.Triple activity_id (activityStreams "object" |> RDF.predicateIRI) (object_id |> RDF.objectIRI))
+            (RDF.Triple activity_id (activityStreams "object" |> RDF.predicateIRI) (object_id |> RDF.objectBlankNode))
         -- object
         |> RDF.addTriple
-            (RDF.Triple (object_id |> RDF.subjectIRI)
+            (RDF.Triple (object_id |> RDF.subjectBlankNode)
                 RDF.type_
                 (activityStreams "Note" |> RDF.objectIRI)
             )
         |> RDF.addTriple
-            (RDF.Triple (object_id |> RDF.subjectIRI)
+            (RDF.Triple (object_id |> RDF.subjectBlankNode)
                 (activityStreams "content" |> RDF.predicateIRI)
                 (RDF.literal content (RDF.xsd "string") Nothing
                     |> RDF.objectLiteral
@@ -190,7 +231,7 @@ composeNote content =
             , HE.onInput UpdateContent
             ]
             []
-        , H.button [] [ H.text "Post" ]
+        , H.button [ HE.onClick Post ] [ H.text "Post" ]
         , H.p []
             [ "An encoded activity with the note looks like this (encoded as RDF/JSON):"
                 |> H.text
