@@ -146,19 +146,33 @@ notesView graph =
 encodeNote : String -> String
 encodeNote content =
     let
-        id =
-            "_"
+        object_id =
+            "#object"
+                |> RDF.iri
+
+        activity_id =
+            ""
                 |> RDF.iri
                 |> RDF.subjectIRI
     in
     RDF.empty
+        -- activity
         |> RDF.addTriple
-            (RDF.Triple id
+            (RDF.Triple activity_id RDF.type_ (activityStreams "Create" |> RDF.objectIRI))
+        |> RDF.addTriple
+            (RDF.Triple activity_id (activityStreams "to" |> RDF.predicateIRI) ("http://localhost:4000/users/alice" |> RDF.objectIRI))
+        |> RDF.addTriple
+            (RDF.Triple activity_id (activityStreams "to" |> RDF.predicateIRI) (activityStreams "Public" |> RDF.objectIRI))
+        |> RDF.addTriple
+            (RDF.Triple activity_id (activityStreams "object" |> RDF.predicateIRI) (object_id |> RDF.objectIRI))
+        -- object
+        |> RDF.addTriple
+            (RDF.Triple (object_id |> RDF.subjectIRI)
                 RDF.type_
                 (activityStreams "Note" |> RDF.objectIRI)
             )
         |> RDF.addTriple
-            (RDF.Triple id
+            (RDF.Triple (object_id |> RDF.subjectIRI)
                 (activityStreams "content" |> RDF.predicateIRI)
                 (RDF.literal content (RDF.xsd "string") Nothing
                     |> RDF.objectLiteral
@@ -178,7 +192,7 @@ composeNote content =
             []
         , H.button [] [ H.text "Post" ]
         , H.p []
-            [ "The encoded note (in RDF/JSON) looks like this:"
+            [ "An encoded activity with the note looks like this (encoded as RDF/JSON):"
                 |> H.text
             ]
         , H.code []
