@@ -243,12 +243,13 @@ asSubject node =
             Nothing
 
 
-mapSubject : Subject -> (IRI -> a) -> (BlankNode -> a) -> a
+mapSubject : Subject -> (IRI -> String) -> (BlankNode -> String) -> String
 mapSubject s fIRI fBlankNode =
     mapNode s
         fIRI
         fBlankNode
-        (\_ -> Debug.todo "Subject can not be a literal")
+        --Debug.todo "Subject can not be a literal")
+        .value
 
 
 
@@ -280,12 +281,14 @@ asPredicate node =
             Nothing
 
 
-mapPredicate : Predicate -> (IRI -> a) -> a
+mapPredicate : Predicate -> (IRI -> String) -> String
 mapPredicate p fIRI =
     mapNode p
         fIRI
-        (\_ -> Debug.todo "Predicate can not be Blank Node")
-        (\_ -> Debug.todo "Predicate can not be Literal")
+        --Debug.todo "Predicate can not be Blank Node")
+        blankNodeId
+        --Debug.todo "Predicate can not be Literal")
+        .value
 
 
 
