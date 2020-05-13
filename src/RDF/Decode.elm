@@ -12,6 +12,7 @@ module RDF.Decode exposing
     , literalDecoder
     , map
     , map2
+    , maybe
     , objectsDecoder
     , sequence
     , succeed
@@ -132,6 +133,21 @@ apply decoderA decoderF =
 ignore : Decoder b -> Decoder a -> Decoder a
 ignore decoderB decoderA =
     map2 (\a _ -> a) decoderA decoderB
+
+
+{-| Decode an optional value
+-}
+maybe : Decoder a -> Decoder (Maybe a)
+maybe (Decoder decoderA) =
+    Decoder
+        (\state ->
+            case decoderA state of
+                Ok ( state_, a ) ->
+                    Ok ( state_, Just a )
+
+                Err _ ->
+                    Ok ( state, Nothing )
+        )
 
 
 {-| Sequence a list of decoders.

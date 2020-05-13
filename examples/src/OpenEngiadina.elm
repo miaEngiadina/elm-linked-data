@@ -22,10 +22,11 @@ import Return exposing (Return)
 
 publicUrl : String
 publicUrl =
-    "http://localhost:4000/public"
+    "https://ap-dev.miaengiadina.ch/public"
 
 
 
+-- "http://localhost:4000/public"
 -- "https://openengiadina.net/public"
 
 
@@ -125,6 +126,7 @@ activityStreams =
 type alias Note =
     { iri : RDF.IRI
     , content : RDF.Literal
+    , context : Maybe RDF.IRI
     }
 
 
@@ -137,6 +139,12 @@ noteDecoder =
             (RDF.Decode.objectsDecoder (activityStreams "content" |> RDF.predicateIRI)
                 RDF.Decode.literalDecoder
                 |> RDF.Decode.first
+            )
+        |> RDF.Decode.apply
+            (RDF.Decode.objectsDecoder (activityStreams "context" |> RDF.predicateIRI)
+                RDF.Decode.iriDecoder
+                |> RDF.Decode.first
+                |> RDF.Decode.maybe
             )
 
 
